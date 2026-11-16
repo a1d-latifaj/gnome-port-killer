@@ -9,65 +9,68 @@
 }
 
 .pk-menu-body {
-    width: 580px;
-    padding: 18px;
-    spacing: 12px;
-    border-radius: 16px;
+    width: 540px;
+    padding: 12px;
+    spacing: 8px;
+    border-radius: 12px;
 }
 
 .pk-header-bar {
-    spacing: 8px;
-    padding: 0 0 2px 0;
-}
-
-.pk-header-title {
-    font-size: 18px;
-    font-weight: 700;
-}
-
-.pk-filter-row {
     spacing: 6px;
     padding: 0;
 }
 
+.pk-header-title {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.pk-filter-row {
+    spacing: 5px;
+    padding: 0;
+}
+
 .pk-search-entry {
-    min-height: 36px;
-    padding: 6px 12px;
-    border-radius: 9px;
-    font-size: 12px;
+    min-height: 26px;
+    height: 26px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
 }
 
 .pk-pill-btn {
-    min-height: 30px;
-    padding: 5px 12px;
-    border-radius: 9px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.pk-proto-btn {
-    min-height: 30px;
-    padding: 5px 10px;
-    border-radius: 9px;
+    min-height: 24px;
+    height: 24px;
+    padding: 2px 8px;
+    border-radius: 6px;
     font-size: 11px;
     font-weight: 600;
 }
 
+.pk-proto-btn {
+    min-height: 24px;
+    height: 24px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
 .pk-tile {
-    spacing: 6px;
-    padding: 12px 14px;
-    margin-bottom: 10px;
-    border-radius: 12px;
+    spacing: 4px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    border-radius: 9px;
 }
 
 .pk-tile-top {
-    spacing: 8px;
+    spacing: 6px;
 }
 
 .pk-port-pill {
-    padding: 2px 8px;
-    border-radius: 6px;
-    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 11px;
     font-weight: 700;
     background-color: rgba(34, 197, 94, 0.16);
     color: #16a34a;
@@ -79,9 +82,9 @@
 }
 
 .pk-proto-tag {
-    padding: 2px 7px;
-    border-radius: 6px;
-    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 10px;
     font-weight: 700;
     background-color: rgba(59, 130, 246, 0.16);
     color: #2563eb;
@@ -93,29 +96,30 @@
 }
 
 .pk-proc-title {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
 }
 
 .pk-proc-sub {
-    font-size: 11px;
+    font-size: 10px;
 }
 
 .pk-cmd-box {
-    font-size: 11px;
-    padding: 2px 0;
+    font-size: 10px;
+    padding: 1px 0;
 }
 
 .pk-tile-actions {
-    spacing: 6px;
-    padding-top: 4px;
+    spacing: 5px;
+    padding-top: 2px;
 }
 
 .pk-mini-btn {
-    min-height: 28px;
-    padding: 4px 10px;
-    border-radius: 8px;
-    font-size: 11px;
+    min-height: 22px;
+    height: 22px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 10px;
     font-weight: 600;
 }
 
@@ -126,7 +130,7 @@
 }
 
 .pk-dark .pk-mini-kill {
-    background-color: rgba(239, 68, 68, 0.15);
+    background-color: rgba(239, 68, 68, 0.16);
     border-color: rgba(239, 68, 68, 0.35);
     color: #f87171;
 }
@@ -138,14 +142,14 @@
 }
 
 .pk-dark .pk-mini-force {
-    background-color: rgba(249, 115, 22, 0.16);
+    background-color: rgba(249, 115, 22, 0.18);
     border-color: rgba(249, 115, 22, 0.38);
     color: #fb923c;
 }
 
 .pk-empty-tile {
-    padding: 18px;
-    font-size: 12px;
+    padding: 12px;
+    font-size: 11px;
 }
 
 /* Light mode */
@@ -165,7 +169,7 @@
 }
 
 .pk-light .pk-cmd-box {
-    color: #334155;
+    color: #475569;
 }
 
 .pk-light .pk-tile {
@@ -210,7 +214,7 @@
 }
 
 .pk-dark .pk-cmd-box {
-    color: #d1d5db;
+    color: #cbd5e1;
 }
 
 .pk-dark .pk-tile {
@@ -227,8 +231,8 @@
 .pk-dark .pk-pill-btn,
 .pk-dark .pk-proto-btn,
 .pk-dark .pk-mini-btn {
-    background-color: #23262f;
-    border: 1px solid #343846;
+    background-color: #22252e;
+    border: 1px solid #323642;
     color: #e5e7eb;
 }
 
