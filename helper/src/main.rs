@@ -1,6 +1,8 @@
 //! A read-only bridge: a privileged daemon owns the fixed BPF program; an
 //! unprivileged --watch client streams invalidations to GNOME. No RPC commands.
+mod event;
 mod native;
+mod state;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
