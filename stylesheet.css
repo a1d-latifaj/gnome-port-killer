@@ -1,0 +1,112 @@
+.panel-button .pk-panel-box {
+    spacing: 5px;
+    padding: 0 4px;
+}
+
+.pk-panel-label {
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.pk-menu-body {
+    width: 520px;
+    padding: 4px 8px 8px 8px;
+}
+
+.pk-header-bar {
+    spacing: 8px;
+    padding: 6px 4px;
+}
+
+.pk-header-title {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.pk-pill-btn {
+    border-radius: 99px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.pk-pill-accent {
+    background-color: #e95420;
+    color: #ffffff;
+}
+
+.pk-pill-accent:hover {
+    background-color: #d64918;
+}
+
+.pk-tile {
+    border-radius: 14px;
+    padding: 10px 12px;
+    margin: 4px 0;
+    spacing: 6px;
+    background-color: rgba(128, 128, 128, 0.12);
+}
+
+.pk-tile-top {
+    spacing: 8px;
+}
+
+.pk-port-pill {
+    background-color: #e95420;
+    color: #ffffff;
+    border-radius: 99px;
+    padding: 2px 9px;
+    font-family: monospace;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.pk-proc-title {
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.pk-proc-sub {
+    font-family: monospace;
+    font-size: 11px;
+    opacity: 0.72;
+}
+
+.pk-cmd-box {
+    border-radius: 8px;
+    padding: 4px 8px;
+    background-color: rgba(128, 128, 128, 0.10);
+    font-family: monospace;
+    font-size: 11px;
+    opacity: 0.85;
+}
+
+.pk-tile-actions {
+    spacing: 6px;
+}
+
+.pk-mini-btn {
+    border-radius: 99px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.pk-mini-kill {
+    background-color: rgba(224, 27, 36, 0.16);
+    color: #c01c28;
+}
+
+.pk-mini-kill:hover {
+    background-color: #c01c28;
+    color: #ffffff;
+}
+
+.pk-empty-tile {
+    border-radius: 14px;
+    padding: 18px 14px;
+    margin: 6px 0;
+    background-color: rgba(128, 128, 128, 0.10);
+    font-size: 12px;
+    opacity: 0.75;
+}
