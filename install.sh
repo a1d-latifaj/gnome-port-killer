@@ -10,5 +10,5 @@ cp "$SCRIPT_DIR/extension.js" "$DEST/"
 cp "$SCRIPT_DIR/stylesheet.css" "$DEST/"
 cp "$SCRIPT_DIR/metadata.json" "$DEST/"
 
-echo "U instalua $UUID ne $DEST"
-echo "Bej Log Out / Log In dhe aktivizoje me: gnome-extensions enable $UUID"
+echo "Installed $UUID to $DEST"
+echo "Log Out / Log In and enable it with: gnome-extensions enable $UUID"
