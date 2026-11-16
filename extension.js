@@ -16,6 +16,7 @@ export default class PortKillerExtension extends Extension {
         this._searchQuery = '';
         this._protoFilter = 'ALL';
         this._cancellable = new Gio.Cancellable();
+        this._protoButtons = {};
 
         this._panelBox = new St.BoxLayout({style_class: 'pk-panel-box'});
         const icon = new St.Icon({
@@ -32,16 +33,116 @@ export default class PortKillerExtension extends Extension {
         this._panelBox.add_child(this._label);
         this._indicator.add_child(this._panelBox);
 
+        this._buildMenuSkeleton();
+
         this._indicator.menu.connect('open-state-changed', (_menu, isOpen) => {
             if (isOpen) {
-                this._renderMenu();
+                this._refreshResults();
+                if (this._searchEntry) {
+                    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                        if (this._searchEntry && this._indicator?.menu?.isOpen) {
+                            global.stage.set_key_focus(this._searchEntry.clutter_text);
+                        }
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
             }
         });
 
         Main.panel.addToStatusArea(this.uuid, this._indicator, 1, 'left');
 
-        this._renderMenu();
+        this._refreshResults();
         this._startKernelSocketMonitor();
+    }
+
+    _buildMenuSkeleton() {
+        this._indicator.menu.removeAll();
+
+        const menuItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
+        this._body = new St.BoxLayout({
+            vertical: true,
+            style_class: 'pk-menu-body',
+        });
+
+        // Header bar
+        const headerBar = new St.BoxLayout({
+            style_class: 'pk-header-bar',
+            x_expand: true,
+        });
+        this._titleLabel = new St.Label({
+            text: 'Active Sockets (0/0)',
+            style_class: 'pk-header-title',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+        });
+        headerBar.add_child(this._titleLabel);
+
+        this._headerActionsBox = new St.BoxLayout({
+            style_class: 'pk-tile-actions',
+        });
+        headerBar.add_child(this._headerActionsBox);
+        this._body.add_child(headerBar);
+
+        // Search + Proto filter row (persistent - never destroyed on typing)
+        const filterRow = new St.BoxLayout({
+            style_class: 'pk-filter-row',
+            x_expand: true,
+        });
+        this._searchEntry = new St.Entry({
+            hint_text: 'Search port, process, PID, command...',
+            text: this._searchQuery,
+            style_class: 'pk-search-entry',
+            x_expand: true,
+            can_focus: true,
+        });
+        this._searchEntry.clutter_text.connect('text-changed', () => {
+            this._searchQuery = this._searchEntry.get_text();
+            this._refreshResults();
+        });
+        filterRow.add_child(this._searchEntry);
+
+        for (const proto of PROTOS) {
+            const pBtn = new St.Button({
+                label: proto,
+                style_class: 'button pk-proto-btn',
+                can_focus: true,
+            });
+            pBtn.connect('clicked', () => {
+                this._protoFilter = proto;
+                this._updateProtoButtonStyles();
+                this._refreshResults();
+            });
+            this._protoButtons[proto] = pBtn;
+            filterRow.add_child(pBtn);
+        }
+        this._updateProtoButtonStyles();
+        this._body.add_child(filterRow);
+
+        // Scrollable results area (only this container is rebuilt)
+        this._scrollView = new St.ScrollView({
+            style: 'max-height: 460px;',
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+        });
+        this._listBox = new St.BoxLayout({
+            vertical: true,
+            x_expand: true,
+        });
+        this._scrollView.add_child(this._listBox);
+        this._body.add_child(this._scrollView);
+
+        menuItem.add_child(this._body);
+        this._indicator.menu.addMenuItem(menuItem);
+    }
+
+    _updateProtoButtonStyles() {
+        for (const proto of PROTOS) {
+            const btn = this._protoButtons[proto];
+            if (!btn) continue;
+            btn.style_class = this._protoFilter === proto
+                ? 'button pk-proto-btn pk-pill-accent'
+                : 'button pk-proto-btn';
+        }
     }
 
     _startKernelSocketMonitor() {
@@ -68,7 +169,7 @@ export default class PortKillerExtension extends Extension {
                 const [line] = stream.read_line_finish_utf8(res);
                 if (line !== null) {
                     if (!this._debounceId) {
-                        this._debounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 80, () => {
+                        this._debounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 120, () => {
                             this._debounceId = null;
                             this._updateBadge();
                             return GLib.SOURCE_REMOVE;
@@ -245,7 +346,7 @@ export default class PortKillerExtension extends Extension {
             this._label.set_text(`${count}`);
 
             if (this._indicator.menu.isOpen) {
-                this._renderMenu();
+                this._refreshResults();
             }
         }
     }
@@ -254,7 +355,7 @@ export default class PortKillerExtension extends Extension {
         const sig = force ? '-9' : '-15';
         GLib.spawn_command_line_sync(`kill ${sig} ${pid}`);
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
-            this._renderMenu();
+            this._refreshResults();
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -379,7 +480,7 @@ export default class PortKillerExtension extends Extension {
         return tile;
     }
 
-    _renderMenu() {
+    _refreshResults() {
         try {
             const allItems = this._getListeningSockets(false);
             const filteredItems = this._getListeningSockets(true);
@@ -387,125 +488,63 @@ export default class PortKillerExtension extends Extension {
             this._lastCount = allItems.length;
             this._label.set_text(`${allItems.length}`);
 
-            this._indicator.menu.removeAll();
-
-            const menuItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
-            const body = new St.BoxLayout({
-                vertical: true,
-                style_class: 'pk-menu-body',
-            });
-
-            // Header bar
-            const headerBar = new St.BoxLayout({
-                style_class: 'pk-header-bar',
-                x_expand: true,
-            });
-            const title = new St.Label({
-                text: `Active Sockets (${filteredItems.length}/${allItems.length})`,
-                style_class: 'pk-header-title',
-                y_align: Clutter.ActorAlign.CENTER,
-                x_expand: true,
-            });
-            headerBar.add_child(title);
-
-            if (filteredItems.length > 0) {
-                const killAllBtn = new St.Button({
-                    label: 'Kill All',
-                    style_class: 'button pk-pill-btn pk-mini-kill',
-                    can_focus: true,
-                });
-                killAllBtn.connect('clicked', () => {
-                    const pids = [...new Set(filteredItems.map(p => p.pid))].join(' ');
-                    GLib.spawn_command_line_sync(`kill -15 ${pids}`);
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
-                        this._renderMenu();
-                        return GLib.SOURCE_REMOVE;
-                    });
-                });
-
-                const forceAllBtn = new St.Button({
-                    label: 'Force All',
-                    style_class: 'button pk-pill-btn pk-pill-accent',
-                    can_focus: true,
-                });
-                forceAllBtn.connect('clicked', () => {
-                    const pids = [...new Set(filteredItems.map(p => p.pid))].join(' ');
-                    GLib.spawn_command_line_sync(`kill -9 ${pids}`);
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
-                        this._renderMenu();
-                        return GLib.SOURCE_REMOVE;
-                    });
-                });
-
-                headerBar.add_child(killAllBtn);
-                headerBar.add_child(forceAllBtn);
+            if (this._titleLabel) {
+                this._titleLabel.set_text(`Active Sockets (${filteredItems.length}/${allItems.length})`);
             }
-            body.add_child(headerBar);
 
-            // Search + Proto filter row
-            const filterRow = new St.BoxLayout({
-                style_class: 'pk-filter-row',
-                x_expand: true,
-            });
-            const searchEntry = new St.Entry({
-                hint_text: 'Kerko porte, proces, PID, komande...',
-                text: this._searchQuery,
-                style_class: 'pk-search-entry',
-                x_expand: true,
-                can_focus: true,
-            });
-            searchEntry.clutter_text.connect('text-changed', () => {
-                this._searchQuery = searchEntry.get_text();
-                this._renderMenu();
-            });
-            filterRow.add_child(searchEntry);
+            if (this._headerActionsBox) {
+                this._headerActionsBox.destroy_all_children();
+                if (filteredItems.length > 0) {
+                    const killAllBtn = new St.Button({
+                        label: 'Kill All',
+                        style_class: 'button pk-pill-btn pk-mini-kill',
+                        can_focus: true,
+                    });
+                    killAllBtn.connect('clicked', () => {
+                        const pids = [...new Set(filteredItems.map(p => p.pid))].join(' ');
+                        GLib.spawn_command_line_sync(`kill -15 ${pids}`);
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
+                            this._refreshResults();
+                            return GLib.SOURCE_REMOVE;
+                        });
+                    });
 
-            for (const proto of PROTOS) {
-                const pBtn = new St.Button({
-                    label: proto,
-                    style_class: this._protoFilter === proto
-                        ? 'button pk-proto-btn pk-pill-accent'
-                        : 'button pk-proto-btn',
-                    can_focus: true,
-                });
-                pBtn.connect('clicked', () => {
-                    this._protoFilter = proto;
-                    this._renderMenu();
-                });
-                filterRow.add_child(pBtn);
+                    const forceAllBtn = new St.Button({
+                        label: 'Force All',
+                        style_class: 'button pk-pill-btn pk-pill-accent',
+                        can_focus: true,
+                    });
+                    forceAllBtn.connect('clicked', () => {
+                        const pids = [...new Set(filteredItems.map(p => p.pid))].join(' ');
+                        GLib.spawn_command_line_sync(`kill -9 ${pids}`);
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
+                            this._refreshResults();
+                            return GLib.SOURCE_REMOVE;
+                        });
+                    });
+
+                    this._headerActionsBox.add_child(killAllBtn);
+                    this._headerActionsBox.add_child(forceAllBtn);
+                }
             }
-            body.add_child(filterRow);
+
+            if (!this._listBox) return;
+            this._listBox.destroy_all_children();
 
             if (filteredItems.length === 0) {
                 const emptyLabel = new St.Label({
-                    text: 'Asnje socket aktiv nuk perputhet me filtrin.',
+                    text: 'No active sockets match the current filter.',
                     style_class: 'pk-empty-tile',
                     x_expand: true,
                 });
-                body.add_child(emptyLabel);
+                this._listBox.add_child(emptyLabel);
             } else {
-                const scrollView = new St.ScrollView({
-                    style: 'max-height: 460px;',
-                    hscrollbar_policy: St.PolicyType.NEVER,
-                    vscrollbar_policy: St.PolicyType.AUTOMATIC,
-                });
-                const listBox = new St.BoxLayout({
-                    vertical: true,
-                    x_expand: true,
-                });
-
                 for (const item of filteredItems) {
-                    listBox.add_child(this._buildSocketTile(item));
+                    this._listBox.add_child(this._buildSocketTile(item));
                 }
-
-                scrollView.add_child(listBox);
-                body.add_child(scrollView);
             }
-
-            menuItem.add_child(body);
-            this._indicator.menu.addMenuItem(menuItem);
         } catch (e) {
-            logError(e, 'PortKiller renderMenu error');
+            logError(e, 'PortKiller refreshResults error');
         }
     }
 
@@ -526,5 +565,9 @@ export default class PortKillerExtension extends Extension {
             this._indicator.destroy();
             this._indicator = null;
         }
+        this._searchEntry = null;
+        this._listBox = null;
+        this._titleLabel = null;
+        this._headerActionsBox = null;
     }
 }
