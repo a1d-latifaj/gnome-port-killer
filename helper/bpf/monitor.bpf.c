@@ -14,15 +14,52 @@ static void *(*bpf_map_lookup_elem)(void *, const void *) = (void *)1;
 static long (*bpf_map_update_elem)(void *, const void *, const void *, __u64) = (void *)2;
 static long (*bpf_map_delete_elem)(void *, const void *) = (void *)3;
 static __u64 (*bpf_get_current_pid_tgid)(void) = (void *)14;
+static __u64 (*bpf_ktime_get_ns)(void) = (void *)5;
 static long (*bpf_probe_read_kernel)(void *, __u32, const void *) = (void *)113;
 static void *(*bpf_get_current_task_btf)(void) = (void *)158;
 static long (*bpf_ringbuf_output)(void *, void *, __u64, __u64) = (void *)130;
 
 struct map_def { __u32 type, key_size, value_size, max_entries, flags; };
 struct map_def SEC("maps") events = {27, 0, 0, 262144, 0};
+struct map_def SEC("maps") lifecycle_events = {27, 0, 0, 262144, 0};
+
+struct socket_event {
+    __u64 socket_id;
+    __u64 timestamp_ns;
+    __u32 pid;
+    __u16 event_type;
+    __u16 family;
+    __u16 protocol;
+    __u16 local_port;
+    __u16 version;
+    __u16 reserved;
+};
 struct map_def SEC("maps") lost = {2, 4, 8, 1, 0};
-struct map_def SEC("maps") pending = {1, 8, 8, 8192, 0};
-struct map_def SEC("maps") udp_tracked = {1, 8, 8, 16384, 0};
+struct map_def SEC("maps") pending_bind = {1, 8, 8, 8192, 0};
+struct map_def SEC("maps") pending_listen = {1, 8, 8, 8192, 0};
+struct udp_socket_metadata {
+    __u64 inode;
+    __u64 socket_id;
+    __u32 pid;
+    __u16 family;
+    __u16 local_port;
+};
+
+struct map_def SEC("maps") udp_tracked = {
+    1, 8, sizeof(struct udp_socket_metadata), 16384, 0
+};
+
+struct tcp_socket_metadata {
+    __u64 inode;
+    __u64 socket_id;
+    __u32 pid;
+    __u16 family;
+    __u16 local_port;
+};
+
+struct map_def SEC("maps") tcp_tracked = {
+    1, 8, sizeof(struct tcp_socket_metadata), 16384, 0
+};
 
 enum { TCP = 1, UDP = 2, UNIX = 3 };
 static INLINE void emit(__u32 proto) {
@@ -32,6 +69,35 @@ static INLINE void emit(__u32 proto) {
         __u32 zero = 0;
         __u64 *counter = bpf_map_lookup_elem(&lost, &zero);
         if (counter) __sync_fetch_and_add(counter, 1);
+    }
+}
+
+static INLINE void emit_lifecycle(
+    __u64 socket_id,
+    __u32 pid,
+    __u16 event_type,
+    __u16 family,
+    __u16 protocol,
+    __u16 local_port
+) {
+    struct socket_event event = {
+        .socket_id = socket_id,
+        .timestamp_ns = bpf_ktime_get_ns(),
+        .pid = pid,
+        .event_type = event_type,
+        .family = family,
+        .protocol = protocol,
+        .local_port = local_port,
+        .version = 2,
+        .reserved = 0,
+    };
+
+    if (bpf_ringbuf_output(
+            &lifecycle_events, &event, sizeof(event), 0)) {
+        __u32 zero = 0;
+        __u64 *counter = bpf_map_lookup_elem(&lost, &zero);
+        if (counter)
+            __sync_fetch_and_add(counter, 1);
     }
 }
 
@@ -52,13 +118,13 @@ static INLINE struct socket *from_fd(__s64 fd) {
 SEC("tracepoint/syscalls/sys_enter_bind")
 int enter_bind(struct trace_event_raw_sys_enter *ctx) {
     __u64 tid = bpf_get_current_pid_tgid(), fd = ctx->args[0];
-    bpf_map_update_elem(&pending, &tid, &fd, 0);
+    bpf_map_update_elem(&pending_bind, &tid, &fd, 0);
     return 0;
 }
 SEC("tracepoint/syscalls/sys_exit_bind")
 int exit_bind(struct trace_event_raw_sys_exit *ctx) {
     __u64 tid = bpf_get_current_pid_tgid();
-    __u64 *fd = bpf_map_lookup_elem(&pending, &tid);
+    __u64 *fd = bpf_map_lookup_elem(&pending_bind, &tid);
     if (fd && ctx->ret == 0) {
         struct socket *socket = from_fd(*fd);
         if (socket) {
@@ -70,34 +136,93 @@ int exit_bind(struct trace_event_raw_sys_exit *ctx) {
                          READ(sk, __sk_common.skc_num) > 0) {
                     __u64 key = (__u64)sk;
                     __u64 inode = READ(((struct socket_alloc *)socket), vfs_inode.i_ino);
-                    if (bpf_map_update_elem(&udp_tracked, &key, &inode, 0) == 0)
+                    __u16 port = READ(sk, __sk_common.skc_num);
+
+                    struct udp_socket_metadata metadata = {
+                        .inode = inode,
+                        .socket_id = inode,
+                        .pid = (__u32)(tid >> 32),
+                        .family = family,
+                        .local_port = port,
+                    };
+
+                    if (inode && bpf_map_update_elem(
+                            &udp_tracked, &key, &metadata, 0) == 0) {
+                        emit_lifecycle(
+                            metadata.socket_id,
+                            metadata.pid,
+                            3,
+                            metadata.family,
+                            17,
+                            metadata.local_port
+                        );
                         emit(UDP);
+                    }
                 }
             }
         }
     }
-    bpf_map_delete_elem(&pending, &tid);
+    bpf_map_delete_elem(&pending_bind, &tid);
     return 0;
 }
 // Listen FD is stored separately so failed bind/listen calls cannot mix state.
 SEC("tracepoint/syscalls/sys_enter_listen")
 int enter_listen(struct trace_event_raw_sys_enter *ctx) {
     __u64 tid = bpf_get_current_pid_tgid(), fd = ctx->args[0];
-    bpf_map_update_elem(&pending, &tid, &fd, 0);
+    bpf_map_update_elem(&pending_listen, &tid, &fd, 0);
     return 0;
 }
 SEC("tracepoint/syscalls/sys_exit_listen")
 int exit_listen(struct trace_event_raw_sys_exit *ctx) {
     __u64 tid = bpf_get_current_pid_tgid();
-    __u64 *fd = bpf_map_lookup_elem(&pending, &tid);
+    __u64 *fd = bpf_map_lookup_elem(&pending_listen, &tid);
     if (fd && ctx->ret == 0) {
         struct socket *socket = from_fd(*fd);
         if (socket) {
             struct sock *sk = READ(socket, sk);
-            if (sk && READ(sk, __sk_common.skc_family) == 1) emit(UNIX);
+            if (sk) {
+                __u16 family = READ(sk, __sk_common.skc_family);
+
+                if (family == 1) {
+                    emit(UNIX);
+                } else if (
+                    (family == 2 || family == 10) &&
+                    READ(socket, type) == 1 &&
+                    READ(sk, __sk_common.skc_state) == 10
+                ) {
+                    __u64 key = (__u64)sk;
+                    __u64 inode = READ(
+                        ((struct socket_alloc *)socket),
+                        vfs_inode.i_ino
+                    );
+                    __u16 port = READ(sk, __sk_common.skc_num);
+
+                    struct tcp_socket_metadata metadata = {
+                        .inode = inode,
+                        .socket_id = inode,
+                        .pid = (__u32)(tid >> 32),
+                        .family = family,
+                        .local_port = port,
+                    };
+
+                    if (inode && port &&
+                        bpf_map_update_elem(
+                            &tcp_tracked, &key, &metadata, 0
+                        ) == 0) {
+                        emit_lifecycle(
+                            metadata.socket_id,
+                            metadata.pid,
+                            1,
+                            metadata.family,
+                            6,
+                            metadata.local_port
+                        );
+                    }
+                }
+            }
         }
     }
-    bpf_map_delete_elem(&pending, &tid);
+    bpf_map_delete_elem(&pending_listen, &tid);
     return 0;
 }
 SEC("tracepoint/sock/inet_sock_set_state")
@@ -118,14 +243,54 @@ int release_socket(struct pt_regs *ctx) {
     __u16 type = READ(socket, type);
     if ((family == 2 || family == 10) && type == 2) {
         __u64 key = (__u64)sk;
-        __u64 *tracked_inode = bpf_map_lookup_elem(&udp_tracked, &key);
-        if (tracked_inode) {
+        struct udp_socket_metadata *tracked =
+            bpf_map_lookup_elem(&udp_tracked, &key);
+
+        if (tracked) {
             __u64 inode = READ(((struct socket_alloc *)socket), vfs_inode.i_ino);
-            if (*tracked_inode == inode)
+
+            if (tracked->inode == inode) {
+                emit_lifecycle(
+                    tracked->socket_id,
+                    tracked->pid,
+                    4,
+                    tracked->family,
+                    17,
+                    tracked->local_port
+                );
                 emit(UDP);
+            }
+
             bpf_map_delete_elem(&udp_tracked, &key);
         }
     }
+    if ((family == 2 || family == 10) && type == 1) {
+        __u64 key = (__u64)sk;
+
+        struct tcp_socket_metadata *tracked =
+            bpf_map_lookup_elem(&tcp_tracked, &key);
+
+        if (tracked) {
+            __u64 inode = READ(
+                ((struct socket_alloc *)socket),
+                vfs_inode.i_ino
+            );
+
+            if (tracked->inode == inode) {
+                emit_lifecycle(
+                    tracked->socket_id,
+                    tracked->pid,
+                    2,
+                    tracked->family,
+                    6,
+                    tracked->local_port
+                );
+            }
+
+            bpf_map_delete_elem(&tcp_tracked, &key);
+        }
+    }
+
     if (family == 1 && (READ(sk, __sk_common.skc_state) == 10 ||
         (type == 2 && READ((struct unix_sock *)sk, addr) != 0))) emit(UNIX);
     return 0;
@@ -133,7 +298,8 @@ int release_socket(struct pt_regs *ctx) {
 SEC("tracepoint/sched/sched_process_exit")
 int process_exit(void *ctx) {
     __u64 tid = bpf_get_current_pid_tgid();
-    bpf_map_delete_elem(&pending, &tid);
+    bpf_map_delete_elem(&pending_bind, &tid);
+    bpf_map_delete_elem(&pending_listen, &tid);
     return 0;
 }
 char LICENSE[] SEC("license") = "GPL";

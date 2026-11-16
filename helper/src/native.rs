@@ -44,6 +44,12 @@ pub fn run(check_only: bool, mut publish: impl FnMut(&str)) -> io::Result<()> {
             .ok_or_else(|| error("events map missing"))?,
     )
     .map_err(error)?;
+    let mut lifecycle_ring = RingBuf::try_from(
+        bpf.take_map("lifecycle_events")
+            .ok_or_else(|| error("lifecycle_events map missing"))?,
+    )
+    .map_err(error)?;
+
     let lost = Array::<_, u64>::try_from(
         bpf.take_map("lost")
             .ok_or_else(|| error("lost map missing"))?,
@@ -80,19 +86,67 @@ pub fn run(check_only: bool, mut publish: impl FnMut(&str)) -> io::Result<()> {
                 publish(message);
             }
         }
+        for _ in 0..4096 {
+            let Some(raw) = lifecycle_ring.next() else {
+                break;
+            };
+
+            if raw.len() != std::mem::size_of::<crate::event::SocketEvent>() {
+                publish("resync");
+                continue;
+            }
+
+            let event = crate::event::SocketEvent {
+                socket_id: u64::from_ne_bytes(raw[0..8].try_into().unwrap()),
+                timestamp_ns: u64::from_ne_bytes(raw[8..16].try_into().unwrap()),
+                pid: u32::from_ne_bytes(raw[16..20].try_into().unwrap()),
+                event_type: u16::from_ne_bytes(raw[20..22].try_into().unwrap()),
+                family: u16::from_ne_bytes(raw[22..24].try_into().unwrap()),
+                protocol: u16::from_ne_bytes(raw[24..26].try_into().unwrap()),
+                local_port: u16::from_ne_bytes(raw[26..28].try_into().unwrap()),
+                version: u16::from_ne_bytes(raw[28..30].try_into().unwrap()),
+                reserved: u16::from_ne_bytes(raw[30..32].try_into().unwrap()),
+            };
+
+            if !event.is_valid() {
+                publish("resync");
+                continue;
+            }
+
+            let kind = match event.event_type {
+                1 => "TCP_LISTEN",
+                2 => "TCP_CLOSE",
+                3 => "UDP_BIND",
+                4 => "UDP_CLOSE",
+                _ => unreachable!(),
+            };
+
+            publish(&format!(
+                "lifecycle {kind} id={} pid={} family={} port={}",
+                event.socket_id, event.pid, event.family, event.local_port
+            ));
+        }
+
         let count = lost.get(&0, 0).map_err(error)?;
         if count != previous_lost {
             previous_lost = count;
             publish("resync");
         }
-        let mut pollfd = libc::pollfd {
-            fd: ring.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
+        let mut pollfds = [
+            libc::pollfd {
+                fd: ring.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: lifecycle_ring.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
         // SAFETY: one valid pollfd lives until poll returns. -1 blocks until an
         // event; this is not a periodic wakeup or snapshot poll.
-        let result = unsafe { libc::poll(&mut pollfd, 1, -1) };
+        let result = unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, -1) };
         if result < 0 {
             let cause = io::Error::last_os_error();
             if cause.kind() == io::ErrorKind::Interrupted {
@@ -100,7 +154,10 @@ pub fn run(check_only: bool, mut publish: impl FnMut(&str)) -> io::Result<()> {
             }
             return Err(cause);
         }
-        if pollfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        if pollfds
+            .iter()
+            .any(|fd| fd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0)
+        {
             return Err(error("Kernel event ring disconnected"));
         }
     }
