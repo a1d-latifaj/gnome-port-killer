@@ -468,6 +468,7 @@ export default class PortKillerExtension extends Extension {
             x_expand: true,
         });
 
+        // Row 1: Port pill + Proto tag + Process name
         const topRow = new St.BoxLayout({style_class: 'pk-tile-top', x_expand: true});
 
         const endpointPill = new St.Label({
@@ -489,18 +490,20 @@ export default class PortKillerExtension extends Extension {
             x_expand: true,
         });
 
-        const procSub = new St.Label({
-            text: `PID ${item.pid} • PPID ${item.ppid} • ${item.rssMb} • ${item.uptime} • ${item.bindAddr}`,
-            style_class: 'pk-proc-sub',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
         topRow.add_child(endpointPill);
         topRow.add_child(protoTag);
         topRow.add_child(procTitle);
-        topRow.add_child(procSub);
         tile.add_child(topRow);
 
+        // Row 2: Metadata line (PID, PPID, RSS, Uptime, Bind address)
+        const procSub = new St.Label({
+            text: `PID ${item.pid} • PPID ${item.ppid} • ${item.rssMb} • ${item.uptime} • ${item.bindAddr}`,
+            style_class: 'pk-proc-sub',
+            x_expand: true,
+        });
+        tile.add_child(procSub);
+
+        // Row 3: Command line
         if (item.cmd) {
             const cmdLabel = new St.Label({
                 text: item.cmd,
@@ -510,13 +513,11 @@ export default class PortKillerExtension extends Extension {
             tile.add_child(cmdLabel);
         }
 
+        // Row 4: Action buttons
         const actionsRow = new St.BoxLayout({
             style_class: 'pk-tile-actions',
             x_expand: true,
         });
-
-        const spacer = new St.Widget({x_expand: true});
-        actionsRow.add_child(spacer);
 
         if (item.url) {
             const openBtn = new St.Button({
@@ -558,6 +559,10 @@ export default class PortKillerExtension extends Extension {
                 return GLib.SOURCE_REMOVE;
             });
         });
+        actionsRow.add_child(copyPidBtn);
+
+        const spacer = new St.Widget({x_expand: true});
+        actionsRow.add_child(spacer);
 
         const killBtn = new St.Button({
             label: 'Kill',
@@ -573,7 +578,6 @@ export default class PortKillerExtension extends Extension {
         });
         forceKillBtn.connect('clicked', () => this._killProc(item.pid, true));
 
-        actionsRow.add_child(copyPidBtn);
         actionsRow.add_child(killBtn);
         actionsRow.add_child(forceKillBtn);
         tile.add_child(actionsRow);
