@@ -7,10 +7,14 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
+const PROTOS = ['ALL', 'TCP', 'UDP', 'UNIX'];
+
 export default class PortKillerExtension extends Extension {
     enable() {
         this._indicator = new PanelMenu.Button(0.0, this.metadata.name, false);
         this._lastCount = -1;
+        this._searchQuery = '';
+        this._protoFilter = 'ALL';
         this._cancellable = new Gio.Cancellable();
 
         this._panelBox = new St.BoxLayout({style_class: 'pk-panel-box'});
@@ -90,7 +94,7 @@ export default class PortKillerExtension extends Extension {
             const [okCmd, cmdBytes] = GLib.file_get_contents(`/proc/${pid}/cmdline`);
             if (okCmd && cmdBytes) {
                 const raw = new TextDecoder().decode(cmdBytes).replace(/\0+/g, ' ').trim();
-                cmd = raw.length > 76 ? `${raw.slice(0, 73)}...` : raw;
+                cmd = raw.length > 78 ? `${raw.slice(0, 75)}...` : raw;
             }
         } catch (_e) {}
 
@@ -124,20 +128,19 @@ export default class PortKillerExtension extends Extension {
         return {cmd, ppid, rssMb, uptime};
     }
 
-    _getListeningPorts() {
+    _parseInetOutput(cmdStr, proto) {
+        const results = [];
         try {
-            const [ok, stdout] = GLib.spawn_command_line_sync('ss -tlpnH');
-            if (!ok || !stdout) return [];
+            const [ok, stdout] = GLib.spawn_command_line_sync(cmdStr);
+            if (!ok || !stdout) return results;
 
             const output = new TextDecoder().decode(stdout);
             const lines = output.split('\n');
-            const seen = new Set();
-            const ports = [];
 
             for (const line of lines) {
-                if (!line.includes('LISTEN')) continue;
+                if (proto === 'TCP' && !line.includes('LISTEN')) continue;
 
-                const addrPortMatch = line.match(/LISTEN\s+\d+\s+\d+\s+(\S+):(\d+)\s+/);
+                const addrPortMatch = line.match(/(\S+):(\d+)\s+/);
                 const procMatch = line.match(/users:\(\("([^"]+)",pid=(\d+)/);
 
                 if (addrPortMatch && procMatch) {
@@ -148,17 +151,85 @@ export default class PortKillerExtension extends Extension {
 
                     const name = procMatch[1];
                     const pid = procMatch[2];
-                    const key = `${port}-${pid}`;
-
-                    if (!seen.has(key)) {
-                        seen.add(key);
-                        const details = this._getProcDetails(pid);
-                        ports.push({port, portNum, bindAddr, name, pid, ...details});
-                    }
+                    results.push({
+                        proto,
+                        endpoint: `:${port}`,
+                        portNum,
+                        url: `http://localhost:${port}`,
+                        bindAddr,
+                        name,
+                        pid,
+                    });
                 }
             }
+        } catch (_e) {}
+        return results;
+    }
 
-            return ports.sort((a, b) => a.portNum - b.portNum);
+    _parseUnixOutput() {
+        const results = [];
+        try {
+            const [ok, stdout] = GLib.spawn_command_line_sync('ss -xlpnH');
+            if (!ok || !stdout) return results;
+
+            const output = new TextDecoder().decode(stdout);
+            const lines = output.split('\n');
+
+            for (const line of lines) {
+                const procMatch = line.match(/users:\(\("([^"]+)",pid=(\d+)/);
+                const pathMatch = line.match(/\s+(\/[^\s]+|@[^\s]+)\s+\d+\s+users:/);
+                if (procMatch && pathMatch) {
+                    const sockPath = pathMatch[1];
+                    const shortSock = sockPath.length > 22 ? `...${sockPath.slice(-19)}` : sockPath;
+                    results.push({
+                        proto: 'UNIX',
+                        endpoint: shortSock,
+                        portNum: 999999,
+                        url: null,
+                        bindAddr: sockPath,
+                        name: procMatch[1],
+                        pid: procMatch[2],
+                    });
+                }
+            }
+        } catch (_e) {}
+        return results;
+    }
+
+    _getListeningSockets(applyFilters = false) {
+        try {
+            const rawList = [
+                ...this._parseInetOutput('ss -tlpnH', 'TCP'),
+                ...this._parseInetOutput('ss -ulpnH', 'UDP'),
+                ...this._parseUnixOutput(),
+            ];
+
+            const seen = new Set();
+            const items = [];
+
+            for (const item of rawList) {
+                const key = `${item.proto}-${item.bindAddr}-${item.endpoint}-${item.pid}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+
+                const details = this._getProcDetails(item.pid);
+                const fullEntry = {...item, ...details};
+
+                if (applyFilters) {
+                    if (this._protoFilter !== 'ALL' && fullEntry.proto !== this._protoFilter) {
+                        continue;
+                    }
+                    if (this._searchQuery.trim() !== '') {
+                        const q = this._searchQuery.trim().toLowerCase();
+                        const hay = `${fullEntry.endpoint} ${fullEntry.name} ${fullEntry.pid} ${fullEntry.cmd} ${fullEntry.bindAddr}`.toLowerCase();
+                        if (!hay.includes(q)) continue;
+                    }
+                }
+
+                items.push(fullEntry);
+            }
+
+            return items.sort((a, b) => a.portNum - b.portNum);
         } catch (e) {
             logError(e, 'PortKiller error');
             return [];
@@ -166,20 +237,29 @@ export default class PortKillerExtension extends Extension {
     }
 
     _updateBadge() {
-        const ports = this._getListeningPorts();
-        const count = ports.length;
+        const allItems = this._getListeningSockets(false);
+        const count = allItems.length;
 
         if (count !== this._lastCount) {
             this._lastCount = count;
             this._label.set_text(`${count}`);
 
             if (this._indicator.menu.isOpen) {
-                this._renderMenu(ports);
+                this._renderMenu();
             }
         }
     }
 
-    _buildServiceTile(item) {
+    _killProc(pid, force = false) {
+        const sig = force ? '-9' : '-15';
+        GLib.spawn_command_line_sync(`kill ${sig} ${pid}`);
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
+            this._renderMenu();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _buildSocketTile(item) {
         const tile = new St.BoxLayout({
             vertical: true,
             style_class: 'pk-tile',
@@ -188,9 +268,15 @@ export default class PortKillerExtension extends Extension {
 
         const topRow = new St.BoxLayout({style_class: 'pk-tile-top', x_expand: true});
 
-        const portPill = new St.Label({
-            text: `:${item.port}`,
+        const endpointPill = new St.Label({
+            text: item.endpoint,
             style_class: 'pk-port-pill',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const protoTag = new St.Label({
+            text: item.proto,
+            style_class: 'pk-proto-tag',
             y_align: Clutter.ActorAlign.CENTER,
         });
 
@@ -207,7 +293,8 @@ export default class PortKillerExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        topRow.add_child(portPill);
+        topRow.add_child(endpointPill);
+        topRow.add_child(protoTag);
         topRow.add_child(procTitle);
         topRow.add_child(procSub);
         tile.add_child(topRow);
@@ -229,31 +316,32 @@ export default class PortKillerExtension extends Extension {
         const spacer = new St.Widget({x_expand: true});
         actionsRow.add_child(spacer);
 
-        const openBtn = new St.Button({
-            label: 'Open',
-            style_class: 'button pk-mini-btn',
-            can_focus: true,
-        });
-        openBtn.connect('clicked', () => {
-            GLib.spawn_command_line_async(`gio open http://localhost:${item.port}`);
-        });
-
-        const copyUrlBtn = new St.Button({
-            label: 'Copy URL',
-            style_class: 'button pk-mini-btn',
-            can_focus: true,
-        });
-        copyUrlBtn.connect('clicked', () => {
-            St.Clipboard.get_default().set_text(
-                St.ClipboardType.CLIPBOARD,
-                `http://localhost:${item.port}`
-            );
-            copyUrlBtn.set_label('Copied');
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
-                copyUrlBtn.set_label('Copy URL');
-                return GLib.SOURCE_REMOVE;
+        if (item.url) {
+            const openBtn = new St.Button({
+                label: 'Open',
+                style_class: 'button pk-mini-btn',
+                can_focus: true,
             });
-        });
+            openBtn.connect('clicked', () => {
+                GLib.spawn_command_line_async(`gio open ${item.url}`);
+            });
+            actionsRow.add_child(openBtn);
+
+            const copyUrlBtn = new St.Button({
+                label: 'Copy URL',
+                style_class: 'button pk-mini-btn',
+                can_focus: true,
+            });
+            copyUrlBtn.connect('clicked', () => {
+                St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, item.url);
+                copyUrlBtn.set_label('Copied');
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 900, () => {
+                    copyUrlBtn.set_label('Copy URL');
+                    return GLib.SOURCE_REMOVE;
+                });
+            });
+            actionsRow.add_child(copyUrlBtn);
+        }
 
         const copyPidBtn = new St.Button({
             label: 'Copy PID',
@@ -261,12 +349,9 @@ export default class PortKillerExtension extends Extension {
             can_focus: true,
         });
         copyPidBtn.connect('clicked', () => {
-            St.Clipboard.get_default().set_text(
-                St.ClipboardType.CLIPBOARD,
-                `${item.pid}`
-            );
+            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, `${item.pid}`);
             copyPidBtn.set_label('Copied');
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 900, () => {
                 copyPidBtn.set_label('Copy PID');
                 return GLib.SOURCE_REMOVE;
             });
@@ -277,28 +362,30 @@ export default class PortKillerExtension extends Extension {
             style_class: 'button pk-mini-btn pk-mini-kill',
             can_focus: true,
         });
-        killBtn.connect('clicked', () => {
-            GLib.spawn_command_line_sync(`kill -15 ${item.pid}`);
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
-                this._renderMenu();
-                return GLib.SOURCE_REMOVE;
-            });
-        });
+        killBtn.connect('clicked', () => this._killProc(item.pid, false));
 
-        actionsRow.add_child(openBtn);
-        actionsRow.add_child(copyUrlBtn);
+        const forceKillBtn = new St.Button({
+            label: 'Force Kill',
+            style_class: 'button pk-mini-btn pk-mini-force',
+            can_focus: true,
+        });
+        forceKillBtn.connect('clicked', () => this._killProc(item.pid, true));
+
         actionsRow.add_child(copyPidBtn);
         actionsRow.add_child(killBtn);
+        actionsRow.add_child(forceKillBtn);
         tile.add_child(actionsRow);
 
         return tile;
     }
 
-    _renderMenu(cachedPorts = null) {
+    _renderMenu() {
         try {
-            const ports = cachedPorts || this._getListeningPorts();
-            this._lastCount = ports.length;
-            this._label.set_text(`${ports.length}`);
+            const allItems = this._getListeningSockets(false);
+            const filteredItems = this._getListeningSockets(true);
+
+            this._lastCount = allItems.length;
+            this._label.set_text(`${allItems.length}`);
 
             this._indicator.menu.removeAll();
 
@@ -314,42 +401,91 @@ export default class PortKillerExtension extends Extension {
                 x_expand: true,
             });
             const title = new St.Label({
-                text: `Active Services (${ports.length})`,
+                text: `Active Sockets (${filteredItems.length}/${allItems.length})`,
                 style_class: 'pk-header-title',
                 y_align: Clutter.ActorAlign.CENTER,
                 x_expand: true,
             });
             headerBar.add_child(title);
 
-            if (ports.length > 0) {
+            if (filteredItems.length > 0) {
                 const killAllBtn = new St.Button({
                     label: 'Kill All',
-                    style_class: 'button pk-pill-btn pk-pill-accent',
+                    style_class: 'button pk-pill-btn pk-mini-kill',
                     can_focus: true,
                 });
                 killAllBtn.connect('clicked', () => {
-                    const pids = [...new Set(ports.map(p => p.pid))].join(' ');
+                    const pids = [...new Set(filteredItems.map(p => p.pid))].join(' ');
                     GLib.spawn_command_line_sync(`kill -15 ${pids}`);
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
                         this._renderMenu();
                         return GLib.SOURCE_REMOVE;
                     });
                 });
-                headerBar.add_child(killAllBtn);
-            }
 
+                const forceAllBtn = new St.Button({
+                    label: 'Force All',
+                    style_class: 'button pk-pill-btn pk-pill-accent',
+                    can_focus: true,
+                });
+                forceAllBtn.connect('clicked', () => {
+                    const pids = [...new Set(filteredItems.map(p => p.pid))].join(' ');
+                    GLib.spawn_command_line_sync(`kill -9 ${pids}`);
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 220, () => {
+                        this._renderMenu();
+                        return GLib.SOURCE_REMOVE;
+                    });
+                });
+
+                headerBar.add_child(killAllBtn);
+                headerBar.add_child(forceAllBtn);
+            }
             body.add_child(headerBar);
 
-            if (ports.length === 0) {
+            // Search + Proto filter row
+            const filterRow = new St.BoxLayout({
+                style_class: 'pk-filter-row',
+                x_expand: true,
+            });
+            const searchEntry = new St.Entry({
+                hint_text: 'Kerko porte, proces, PID, komande...',
+                text: this._searchQuery,
+                style_class: 'pk-search-entry',
+                x_expand: true,
+                can_focus: true,
+            });
+            searchEntry.clutter_text.connect('text-changed', () => {
+                this._searchQuery = searchEntry.get_text();
+                this._renderMenu();
+            });
+            filterRow.add_child(searchEntry);
+
+            for (const proto of PROTOS) {
+                const pBtn = new St.Button({
+                    label: proto,
+                    style_class: this._protoFilter === proto
+                        ? 'button pk-proto-btn pk-pill-accent'
+                        : 'button pk-proto-btn',
+                    can_focus: true,
+                });
+                pBtn.connect('clicked', () => {
+                    this._protoFilter = proto;
+                    this._renderMenu();
+                });
+                filterRow.add_child(pBtn);
+            }
+            body.add_child(filterRow);
+
+            if (filteredItems.length === 0) {
                 const emptyLabel = new St.Label({
-                    text: 'Asnjë shërbim lokal aktiv në këtë moment.',
+                    text: 'Asnje socket aktiv nuk perputhet me filtrin.',
                     style_class: 'pk-empty-tile',
                     x_expand: true,
                 });
                 body.add_child(emptyLabel);
             } else {
                 const scrollView = new St.ScrollView({
-                    style: 'max-height: 480px;',
+                    style: 'max-height: 460px;',
                     hscrollbar_policy: St.PolicyType.NEVER,
                     vscrollbar_policy: St.PolicyType.AUTOMATIC,
                 });
@@ -358,8 +494,8 @@ export default class PortKillerExtension extends Extension {
                     x_expand: true,
                 });
 
-                for (const item of ports) {
-                    listBox.add_child(this._buildServiceTile(item));
+                for (const item of filteredItems) {
+                    listBox.add_child(this._buildSocketTile(item));
                 }
 
                 scrollView.add_child(listBox);
