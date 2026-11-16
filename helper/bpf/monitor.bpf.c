@@ -22,6 +22,7 @@ struct map_def { __u32 type, key_size, value_size, max_entries, flags; };
 struct map_def SEC("maps") events = {27, 0, 0, 262144, 0};
 struct map_def SEC("maps") lost = {2, 4, 8, 1, 0};
 struct map_def SEC("maps") pending = {1, 8, 8, 8192, 0};
+struct map_def SEC("maps") udp_tracked = {1, 8, 8, 16384, 0};
 
 enum { TCP = 1, UDP = 2, UNIX = 3 };
 static INLINE void emit(__u32 proto) {
@@ -66,7 +67,12 @@ int exit_bind(struct trace_event_raw_sys_exit *ctx) {
                 __u16 family = READ(sk, __sk_common.skc_family);
                 if (family == 1) emit(UNIX);
                 else if ((family == 2 || family == 10) &&
-                         READ(sk, __sk_common.skc_num) > 0 && READ(sk, __sk_common.skc_num) < 32768) emit(UDP);
+                         READ(sk, __sk_common.skc_num) > 0) {
+                    __u64 key = (__u64)sk;
+                    __u64 inode = READ(((struct socket_alloc *)socket), vfs_inode.i_ino);
+                    if (bpf_map_update_elem(&udp_tracked, &key, &inode, 0) == 0)
+                        emit(UDP);
+                }
             }
         }
     }
@@ -110,8 +116,16 @@ int release_socket(struct pt_regs *ctx) {
     if (!sk) return 0;
     __u16 family = READ(sk, __sk_common.skc_family);
     __u16 type = READ(socket, type);
-    if ((family == 2 || family == 10) && type == 2 &&
-        READ(sk, __sk_common.skc_num) > 0 && READ(sk, __sk_common.skc_num) < 32768) emit(UDP);
+    if ((family == 2 || family == 10) && type == 2) {
+        __u64 key = (__u64)sk;
+        __u64 *tracked_inode = bpf_map_lookup_elem(&udp_tracked, &key);
+        if (tracked_inode) {
+            __u64 inode = READ(((struct socket_alloc *)socket), vfs_inode.i_ino);
+            if (*tracked_inode == inode)
+                emit(UDP);
+            bpf_map_delete_elem(&udp_tracked, &key);
+        }
+    }
     if (family == 1 && (READ(sk, __sk_common.skc_state) == 10 ||
         (type == 2 && READ((struct unix_sock *)sk, addr) != 0))) emit(UNIX);
     return 0;
