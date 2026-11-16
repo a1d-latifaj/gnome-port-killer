@@ -15,12 +15,13 @@ export default class PortKillerExtension extends Extension {
         this._lastCount = -1;
         this._searchQuery = '';
         this._protoFilter = 'ALL';
-        this._notifyEnabled = false;
+        this._notifyEnabled = true;
         this._knownSockets = new Map();
         this._dockerPortMap = new Map();
         this._dockerCacheTime = 0;
         this._cancellable = new Gio.Cancellable();
         this._protoButtons = {};
+        this._currentModeClass = null;
 
         this._panelBox = new St.BoxLayout({style_class: 'pk-panel-box'});
         const icon = new St.Icon({
@@ -39,6 +40,15 @@ export default class PortKillerExtension extends Extension {
 
         this._buildMenuSkeleton();
         this._syncThemeMode();
+
+        try {
+            this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+            this._themeChangedId = this._interfaceSettings.connect('changed', (_s, key) => {
+                if (key === 'color-scheme' || key === 'gtk-theme') {
+                    this._syncThemeMode();
+                }
+            });
+        } catch (_e) {}
 
         this._indicator.menu.connect('open-state-changed', (_menu, isOpen) => {
             if (isOpen) {
@@ -63,26 +73,107 @@ export default class PortKillerExtension extends Extension {
         this._startKernelSocketMonitor();
     }
 
-    _syncThemeMode() {
-        if (!this._body) return;
-        let isDark = true;
+    _isSystemDarkMode() {
         try {
-            const settings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+            const stSettings = St.Settings.get();
+            const stScheme = stSettings.color_scheme;
+            if (stScheme === St.SystemColorScheme.PREFER_LIGHT) return false;
+            if (stScheme === St.SystemColorScheme.PREFER_DARK) return true;
+        } catch (_e) {}
+
+        try {
+            const settings = this._interfaceSettings || new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             const scheme = settings.get_string('color-scheme');
-            const gtkTheme = settings.get_string('gtk-theme').toLowerCase();
-            if (scheme === 'prefer-light') {
-                isDark = false;
-            } else if (scheme === 'prefer-dark') {
-                isDark = true;
-            } else {
-                isDark = !gtkTheme.includes('light');
+            if (scheme === 'prefer-light') return false;
+            if (scheme === 'prefer-dark') return true;
+        } catch (_e) {}
+
+        try {
+            const ctx = St.ThemeContext.get_for_stage(global.stage);
+            const rootNode = ctx.root_node;
+            if (rootNode) {
+                const [found, color] = rootNode.lookup_color('theme_bg_color', false);
+                if (found && color) {
+                    const lum = (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
+                    return lum < 0.5;
+                }
             }
         } catch (_e) {}
 
-        const modeClass = isDark ? 'pk-dark' : 'pk-light';
-        this._body.style_class = `pk-menu-body ${modeClass}`;
-        if (this._indicator?.menu?.box) {
-            this._indicator.menu.box.style_class = modeClass;
+        return false;
+    }
+
+    _syncThemeMode() {
+        const isDark = this._isSystemDarkMode();
+        const nextClass = isDark ? 'pk-dark' : 'pk-light';
+        const prevClass = this._currentModeClass;
+        this._currentModeClass = nextClass;
+
+        if (this._body) {
+            if (prevClass) this._body.remove_style_class_name(prevClass);
+            this._body.add_style_class_name('pk-menu-body');
+            this._body.add_style_class_name(nextClass);
+        }
+
+        this._updateNotifySwitchUI();
+    }
+
+    _buildNotifySwitch() {
+        const btn = new St.Button({
+            style_class: 'pk-switch-btn',
+            can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        const inner = new St.BoxLayout({
+            style: 'spacing: 6px;',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._notifySwitchText = new St.Label({
+            text: this._notifyEnabled ? 'Notify ON' : 'Notify OFF',
+            style_class: 'pk-switch-label',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._notifyTrack = new St.Bin({
+            style_class: 'pk-switch-track',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+
+        this._notifyKnob = new St.Bin({
+            style_class: 'pk-switch-knob',
+        });
+        this._notifyTrack.set_child(this._notifyKnob);
+
+        inner.add_child(this._notifySwitchText);
+        inner.add_child(this._notifyTrack);
+        btn.set_child(inner);
+
+        btn.connect('clicked', () => {
+            this._notifyEnabled = !this._notifyEnabled;
+            this._updateNotifySwitchUI();
+            if (this._notifyEnabled) {
+                const current = this._getListeningSockets(false);
+                this._syncKnownSockets(current, false);
+            }
+        });
+
+        this._notifySwitchBtn = btn;
+        this._updateNotifySwitchUI();
+        return btn;
+    }
+
+    _updateNotifySwitchUI() {
+        if (!this._notifySwitchText || !this._notifyTrack || !this._notifyKnob) return;
+        this._notifySwitchText.set_text(this._notifyEnabled ? 'Notify ON' : 'Notify OFF');
+
+        if (this._notifyEnabled) {
+            this._notifyTrack.add_style_class_name('pk-switch-track-on');
+            this._notifyKnob.set_style('margin-left: 16px;');
+        } else {
+            this._notifyTrack.remove_style_class_name('pk-switch-track-on');
+            this._notifyKnob.set_style('margin-left: 0px;');
         }
     }
 
@@ -107,21 +198,7 @@ export default class PortKillerExtension extends Extension {
             x_expand: true,
         });
         headerBar.add_child(this._titleLabel);
-
-        this._notifyBtn = new St.Button({
-            label: 'Notify: OFF',
-            style_class: 'pk-pill-btn',
-            can_focus: true,
-        });
-        this._notifyBtn.connect('clicked', () => {
-            this._notifyEnabled = !this._notifyEnabled;
-            this._updateNotifyButtonStyle();
-            if (this._notifyEnabled) {
-                const current = this._getListeningSockets(false);
-                this._syncKnownSockets(current, false);
-            }
-        });
-        headerBar.add_child(this._notifyBtn);
+        headerBar.add_child(this._buildNotifySwitch());
 
         this._headerActionsBox = new St.BoxLayout({
             style_class: 'pk-tile-actions',
@@ -179,14 +256,6 @@ export default class PortKillerExtension extends Extension {
 
         menuItem.add_child(this._body);
         this._indicator.menu.addMenuItem(menuItem);
-    }
-
-    _updateNotifyButtonStyle() {
-        if (!this._notifyBtn) return;
-        this._notifyBtn.set_label(this._notifyEnabled ? 'Notify: ON' : 'Notify: OFF');
-        this._notifyBtn.style_class = this._notifyEnabled
-            ? 'pk-pill-btn pk-pill-accent'
-            : 'pk-pill-btn';
     }
 
     _updateProtoButtonStyles() {
@@ -679,6 +748,14 @@ export default class PortKillerExtension extends Extension {
     }
 
     disable() {
+        if (this._themeChangedId && this._interfaceSettings) {
+            try {
+                this._interfaceSettings.disconnect(this._themeChangedId);
+            } catch (_e) {}
+            this._themeChangedId = null;
+        }
+        this._interfaceSettings = null;
+
         if (this._debounceId) {
             GLib.Source.remove(this._debounceId);
             this._debounceId = null;
@@ -708,7 +785,10 @@ export default class PortKillerExtension extends Extension {
         this._listBox = null;
         this._titleLabel = null;
         this._headerActionsBox = null;
-        this._notifyBtn = null;
+        this._notifySwitchBtn = null;
+        this._notifySwitchText = null;
+        this._notifyTrack = null;
+        this._notifyKnob = null;
         this._knownSockets.clear();
         this._dockerPortMap.clear();
     }
