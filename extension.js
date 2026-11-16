@@ -2,6 +2,7 @@ import St from 'gi://St';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
+import Pango from 'gi://Pango';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
@@ -75,32 +76,12 @@ export default class PortKillerExtension extends Extension {
 
     _isSystemDarkMode() {
         try {
-            const stSettings = St.Settings.get();
-            const stScheme = stSettings.color_scheme;
-            if (stScheme === St.SystemColorScheme.PREFER_LIGHT) return false;
-            if (stScheme === St.SystemColorScheme.PREFER_DARK) return true;
-        } catch (_e) {}
-
-        try {
             const settings = this._interfaceSettings || new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
-            const scheme = settings.get_string('color-scheme');
-            if (scheme === 'prefer-light') return false;
-            if (scheme === 'prefer-dark') return true;
-        } catch (_e) {}
-
-        try {
-            const ctx = St.ThemeContext.get_for_stage(global.stage);
-            const rootNode = ctx.root_node;
-            if (rootNode) {
-                const [found, color] = rootNode.lookup_color('theme_bg_color', false);
-                if (found && color) {
-                    const lum = (0.299 * color.red + 0.587 * color.green + 0.114 * color.blue) / 255;
-                    return lum < 0.5;
-                }
-            }
-        } catch (_e) {}
-
-        return false;
+            // GNOME's default preference is light; only an explicit dark preference opts in.
+            return settings.get_string('color-scheme') === 'prefer-dark';
+        } catch (_e) {
+            return false;
+        }
     }
 
     _syncThemeMode() {
@@ -115,6 +96,13 @@ export default class PortKillerExtension extends Extension {
             this._body.add_style_class_name(nextClass);
         }
 
+        const menuBox = this._indicator?.menu.box;
+        if (menuBox) {
+            if (prevClass) menuBox.remove_style_class_name(prevClass);
+            menuBox.add_style_class_name('pk-menu-surface');
+            menuBox.add_style_class_name(nextClass);
+        }
+
         this._updateNotifySwitchUI();
     }
 
@@ -125,30 +113,13 @@ export default class PortKillerExtension extends Extension {
             y_align: Clutter.ActorAlign.CENTER,
         });
 
-        const inner = new St.BoxLayout({
-            style: 'spacing: 6px;',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
+        btn.accessible_name = 'Toggle port notifications';
         this._notifySwitchText = new St.Label({
-            text: this._notifyEnabled ? 'Notify ON' : 'Notify OFF',
+            text: '',
             style_class: 'pk-switch-label',
             y_align: Clutter.ActorAlign.CENTER,
         });
-
-        this._notifyTrack = new St.Bin({
-            style_class: 'pk-switch-track',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
-        this._notifyKnob = new St.Bin({
-            style_class: 'pk-switch-knob',
-        });
-        this._notifyTrack.set_child(this._notifyKnob);
-
-        inner.add_child(this._notifySwitchText);
-        inner.add_child(this._notifyTrack);
-        btn.set_child(inner);
+        btn.set_child(this._notifySwitchText);
 
         btn.connect('clicked', () => {
             this._notifyEnabled = !this._notifyEnabled;
@@ -165,22 +136,16 @@ export default class PortKillerExtension extends Extension {
     }
 
     _updateNotifySwitchUI() {
-        if (!this._notifySwitchText || !this._notifyTrack || !this._notifyKnob) return;
-        this._notifySwitchText.set_text(this._notifyEnabled ? 'Notify ON' : 'Notify OFF');
-
-        if (this._notifyEnabled) {
-            this._notifyTrack.add_style_class_name('pk-switch-track-on');
-            this._notifyKnob.set_style('margin-left: 16px;');
-        } else {
-            this._notifyTrack.remove_style_class_name('pk-switch-track-on');
-            this._notifyKnob.set_style('margin-left: 0px;');
-        }
+        if (!this._notifySwitchText) return;
+        this._notifySwitchText.set_text(this._notifyEnabled ? 'Notify: ON' : 'Notify: OFF');
+        this._notifySwitchBtn?.set_checked(this._notifyEnabled);
     }
 
     _buildMenuSkeleton() {
         this._indicator.menu.removeAll();
 
-        const menuItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
+        const menuItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        menuItem.add_style_class_name('pk-menu-item');
         this._body = new St.BoxLayout({
             vertical: true,
             style_class: 'pk-menu-body',
@@ -192,16 +157,25 @@ export default class PortKillerExtension extends Extension {
             x_expand: true,
         });
         this._titleLabel = new St.Label({
-            text: 'Active Sockets (0/0)',
+            text: 'Active Sockets',
             style_class: 'pk-header-title',
             y_align: Clutter.ActorAlign.CENTER,
             x_expand: true,
         });
-        headerBar.add_child(this._titleLabel);
+        const titleBox = new St.BoxLayout({style_class: 'pk-title-box', x_expand: true});
+        this._titleLabel.x_expand = false;
+        this._countLabel = new St.Label({
+            text: '(0/0)',
+            style_class: 'pk-count-label',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        titleBox.add_child(this._titleLabel);
+        titleBox.add_child(this._countLabel);
+        headerBar.add_child(titleBox);
         headerBar.add_child(this._buildNotifySwitch());
 
         this._headerActionsBox = new St.BoxLayout({
-            style_class: 'pk-tile-actions',
+            style_class: 'pk-header-actions',
         });
         headerBar.add_child(this._headerActionsBox);
         this._body.add_child(headerBar);
@@ -218,6 +192,7 @@ export default class PortKillerExtension extends Extension {
             x_expand: true,
             can_focus: true,
         });
+        this._searchEntry.set_primary_icon(new St.Icon({icon_name: 'edit-find-symbolic', style_class: 'pk-search-icon'}));
         this._searchEntry.clutter_text.connect('text-changed', () => {
             this._searchQuery = this._searchEntry.get_text();
             this._refreshResults();
@@ -584,6 +559,7 @@ export default class PortKillerExtension extends Extension {
             x_expand: true,
         });
 
+        procTitle.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         topRow.add_child(endpointPill);
         topRow.add_child(protoTag);
         topRow.add_child(procTitle);
@@ -595,6 +571,7 @@ export default class PortKillerExtension extends Extension {
             style_class: 'pk-proc-sub',
             x_expand: true,
         });
+        procSub.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         tile.add_child(procSub);
 
         // Row 3: Command line
@@ -604,6 +581,7 @@ export default class PortKillerExtension extends Extension {
                 style_class: 'pk-cmd-box',
                 x_expand: true,
             });
+            cmdLabel.clutter_text.ellipsize = Pango.EllipsizeMode.END;
             tile.add_child(cmdLabel);
         }
 
@@ -688,7 +666,7 @@ export default class PortKillerExtension extends Extension {
             this._label.set_text(`${allItems.length}`);
 
             if (this._titleLabel) {
-                this._titleLabel.set_text(`Active Sockets (${filteredItems.length}/${allItems.length})`);
+                this._countLabel.set_text(`(${filteredItems.length}/${allItems.length})`);
             }
 
             if (this._headerActionsBox) {
@@ -710,7 +688,7 @@ export default class PortKillerExtension extends Extension {
 
                     const forceAllBtn = new St.Button({
                         label: 'Force All',
-                        style_class: 'pk-pill-btn pk-pill-accent',
+                        style_class: 'pk-pill-btn pk-mini-force',
                         can_focus: true,
                     });
                     forceAllBtn.connect('clicked', () => {
@@ -784,11 +762,10 @@ export default class PortKillerExtension extends Extension {
         this._searchEntry = null;
         this._listBox = null;
         this._titleLabel = null;
+        this._countLabel = null;
         this._headerActionsBox = null;
         this._notifySwitchBtn = null;
         this._notifySwitchText = null;
-        this._notifyTrack = null;
-        this._notifyKnob = null;
         this._knownSockets.clear();
         this._dockerPortMap.clear();
     }

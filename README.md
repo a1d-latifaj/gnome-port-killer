@@ -11,6 +11,7 @@ A compact, developer-focused GNOME Shell extension for monitoring active local s
 - **Process Details**: Displays PID, PPID, RSS memory usage, uptime, bind address/socket path, and truncated command line.
 - **Quick Actions**: `Open` (`http://localhost:<port>`), `Copy URL`, `Copy PID`, graceful `Kill` (`SIGTERM`), `Force Kill` (`SIGKILL`), and bulk `Kill All` / `Force All`.
 - **Native GNOME Styling**: Built with GNOME Shell `St` widgets and compact spacing that adapts naturally to Light/Dark themes.
+- **System Appearance**: Compact charcoal cards in Dark mode and neutral white cards in Light mode. Follows GNOME Settings → Appearance automatically, including changes while the menu is open.
 
 ## Installation
 
