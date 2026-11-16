@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 UUID="port-killer@dev"
-DEST="$HOME/.local/share/gnome-shell/extensions/$UUID"
+DEST="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$UUID"
 
 gnome-extensions disable "$UUID" 2>/dev/null || true
 rm -rf "$DEST"
 echo "Removed $UUID."
+
+echo "To remove the system event monitor too: ./scripts/uninstall-helper.sh"

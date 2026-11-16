@@ -3,3 +3,6 @@
 __pycache__/
 .DS_Store
 *~
+
+/helper/target/
+**/gschemas.compiled

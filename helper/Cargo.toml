@@ -1,0 +1,15 @@
+[package]
+name = "port-killer-events"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Read-only Linux socket event bridge for the Port & Process Killer GNOME extension"
+
+[dependencies]
+aya = "=0.15.0"
+libc = "0.2"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

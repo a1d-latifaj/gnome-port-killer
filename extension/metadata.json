@@ -2,6 +2,7 @@
   "name": "Port & Process Killer",
   "description": "Monitor active local sockets (TCP, UDP, UNIX) and terminate processes from the GNOME Top Bar.",
   "uuid": "port-killer@dev",
+  "settings-schema": "org.gnome.shell.extensions.port-killer",
   "shell-version": [
     "46",
     "47",

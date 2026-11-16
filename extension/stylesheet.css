@@ -97,3 +97,8 @@
 .pk-dark .pk-mini-kill:hover, .pk-dark .pk-mini-force:hover { background-color: #593c36; color: #ffb5a5; }
 .pk-dark .pk-pill-btn:focus, .pk-dark .pk-mini-btn:focus, .pk-dark .pk-switch-btn:focus,
 .pk-dark .pk-proto-btn:focus, .pk-dark .pk-search-entry:focus { border-color: #78b5e8; }
+
+.pk-status-label { font-size: 10px; padding: 4px 2px; }
+.pk-light .pk-status-label { color: #a13d2d; }
+.pk-dark .pk-status-label { color: #f09988; }
+.pk-mini-btn:insensitive { opacity: 0.45; }

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.port-killer" path="/org/gnome/shell/extensions/port-killer/">
+    <key name="notify-enabled" type="b">
+      <default>true</default>
+      <summary>Notify when TCP or UDP listeners open or close</summary>
+    </key>
+    <key name="protocol-filter" type="s">
+      <choices><choice value="ALL"/><choice value="TCP"/><choice value="UDP"/><choice value="UNIX"/></choices>
+      <default>'ALL'</default>
+      <summary>Last selected socket protocol</summary>
+    </key>
+    <key name="view-mode" type="s">
+      <choices><choice value="DEV"/><choice value="ALL"/></choices>
+      <default>'DEV'</default>
+      <summary>Developer or all sockets view</summary>
+    </key>
+    <key name="dev-includes" type="as">
+      <default>[]</default><summary>Services explicitly included in developer view</summary>
+    </key>
+    <key name="dev-excludes" type="as">
+      <default>[]</default><summary>Services explicitly hidden from developer view</summary>
+    </key>
+  </schema>
+</schemalist>
