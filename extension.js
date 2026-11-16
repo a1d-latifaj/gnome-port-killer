@@ -38,9 +38,11 @@ export default class PortKillerExtension extends Extension {
         this._indicator.add_child(this._panelBox);
 
         this._buildMenuSkeleton();
+        this._syncThemeMode();
 
         this._indicator.menu.connect('open-state-changed', (_menu, isOpen) => {
             if (isOpen) {
+                this._syncThemeMode();
                 this._refreshResults();
                 if (this._searchEntry) {
                     GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -59,6 +61,17 @@ export default class PortKillerExtension extends Extension {
         this._syncKnownSockets(initialItems, false);
         this._refreshResults();
         this._startKernelSocketMonitor();
+    }
+
+    _syncThemeMode() {
+        if (!this._body) return;
+        let isDark = true;
+        try {
+            const settings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+            const scheme = settings.get_string('color-scheme');
+            isDark = scheme !== 'prefer-light';
+        } catch (_e) {}
+        this._body.style_class = isDark ? 'pk-menu-body pk-dark' : 'pk-menu-body pk-light';
     }
 
     _buildMenuSkeleton() {
@@ -85,7 +98,7 @@ export default class PortKillerExtension extends Extension {
 
         this._notifyBtn = new St.Button({
             label: 'Notify: OFF',
-            style_class: 'button pk-pill-btn',
+            style_class: 'pk-pill-btn',
             can_focus: true,
         });
         this._notifyBtn.connect('clicked', () => {
@@ -125,7 +138,7 @@ export default class PortKillerExtension extends Extension {
         for (const proto of PROTOS) {
             const pBtn = new St.Button({
                 label: proto,
-                style_class: 'button pk-proto-btn',
+                style_class: 'pk-proto-btn',
                 can_focus: true,
             });
             pBtn.connect('clicked', () => {
@@ -160,8 +173,8 @@ export default class PortKillerExtension extends Extension {
         if (!this._notifyBtn) return;
         this._notifyBtn.set_label(this._notifyEnabled ? 'Notify: ON' : 'Notify: OFF');
         this._notifyBtn.style_class = this._notifyEnabled
-            ? 'button pk-pill-btn pk-pill-accent'
-            : 'button pk-pill-btn';
+            ? 'pk-pill-btn pk-pill-accent'
+            : 'pk-pill-btn';
     }
 
     _updateProtoButtonStyles() {
@@ -169,8 +182,8 @@ export default class PortKillerExtension extends Extension {
             const btn = this._protoButtons[proto];
             if (!btn) continue;
             btn.style_class = this._protoFilter === proto
-                ? 'button pk-proto-btn pk-pill-accent'
-                : 'button pk-proto-btn';
+                ? 'pk-proto-btn pk-pill-accent'
+                : 'pk-proto-btn';
         }
     }
 
@@ -522,7 +535,7 @@ export default class PortKillerExtension extends Extension {
         if (item.url) {
             const openBtn = new St.Button({
                 label: 'Open',
-                style_class: 'button pk-mini-btn',
+                style_class: 'pk-mini-btn',
                 can_focus: true,
             });
             openBtn.connect('clicked', () => {
@@ -532,7 +545,7 @@ export default class PortKillerExtension extends Extension {
 
             const copyUrlBtn = new St.Button({
                 label: 'Copy URL',
-                style_class: 'button pk-mini-btn',
+                style_class: 'pk-mini-btn',
                 can_focus: true,
             });
             copyUrlBtn.connect('clicked', () => {
@@ -548,7 +561,7 @@ export default class PortKillerExtension extends Extension {
 
         const copyPidBtn = new St.Button({
             label: 'Copy PID',
-            style_class: 'button pk-mini-btn',
+            style_class: 'pk-mini-btn',
             can_focus: true,
         });
         copyPidBtn.connect('clicked', () => {
@@ -566,14 +579,14 @@ export default class PortKillerExtension extends Extension {
 
         const killBtn = new St.Button({
             label: 'Kill',
-            style_class: 'button pk-mini-btn pk-mini-kill',
+            style_class: 'pk-mini-btn pk-mini-kill',
             can_focus: true,
         });
         killBtn.connect('clicked', () => this._killProc(item.pid, false));
 
         const forceKillBtn = new St.Button({
             label: 'Force Kill',
-            style_class: 'button pk-mini-btn pk-mini-force',
+            style_class: 'pk-mini-btn pk-mini-force',
             can_focus: true,
         });
         forceKillBtn.connect('clicked', () => this._killProc(item.pid, true));
@@ -616,7 +629,7 @@ export default class PortKillerExtension extends Extension {
 
                     const forceAllBtn = new St.Button({
                         label: 'Force All',
-                        style_class: 'button pk-pill-btn pk-pill-accent',
+                        style_class: 'pk-pill-btn pk-pill-accent',
                         can_focus: true,
                     });
                     forceAllBtn.connect('clicked', () => {
