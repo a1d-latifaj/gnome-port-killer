@@ -557,8 +557,17 @@ export default class PortKillerExtension extends Extension {
             this._cancellable.cancel();
             this._cancellable = null;
         }
+        if (this._dataStream) {
+            try {
+                this._dataStream.close(null);
+            } catch (_e) {}
+            this._dataStream = null;
+        }
         if (this._monitorProc) {
-            this._monitorProc.force_exit();
+            try {
+                this._monitorProc.send_signal(15);
+                this._monitorProc.force_exit();
+            } catch (_e) {}
             this._monitorProc = null;
         }
         if (this._indicator) {

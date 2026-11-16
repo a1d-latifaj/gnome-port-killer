@@ -1,7 +1,13 @@
 {
   "name": "Port & Process Killer",
-  "description": "Shfaq portat aktive lokale dhe mbyll proceset me nje klikim.",
+  "description": "Monitor active local sockets (TCP, UDP, UNIX) and terminate processes from the GNOME Top Bar.",
   "uuid": "port-killer@dev",
-  "shell-version": ["46", "47", "48", "49", "50"],
+  "shell-version": [
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
   "version": 1
 }
