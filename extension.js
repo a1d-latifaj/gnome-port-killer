@@ -15,6 +15,10 @@ export default class PortKillerExtension extends Extension {
         this._lastCount = -1;
         this._searchQuery = '';
         this._protoFilter = 'ALL';
+        this._notifyEnabled = false;
+        this._knownSockets = new Map();
+        this._dockerPortMap = new Map();
+        this._dockerCacheTime = 0;
         this._cancellable = new Gio.Cancellable();
         this._protoButtons = {};
 
@@ -51,6 +55,8 @@ export default class PortKillerExtension extends Extension {
 
         Main.panel.addToStatusArea(this.uuid, this._indicator, 1, 'left');
 
+        const initialItems = this._getListeningSockets(false);
+        this._syncKnownSockets(initialItems, false);
         this._refreshResults();
         this._startKernelSocketMonitor();
     }
@@ -76,6 +82,21 @@ export default class PortKillerExtension extends Extension {
             x_expand: true,
         });
         headerBar.add_child(this._titleLabel);
+
+        this._notifyBtn = new St.Button({
+            label: 'Notify: OFF',
+            style_class: 'button pk-pill-btn',
+            can_focus: true,
+        });
+        this._notifyBtn.connect('clicked', () => {
+            this._notifyEnabled = !this._notifyEnabled;
+            this._updateNotifyButtonStyle();
+            if (this._notifyEnabled) {
+                const current = this._getListeningSockets(false);
+                this._syncKnownSockets(current, false);
+            }
+        });
+        headerBar.add_child(this._notifyBtn);
 
         this._headerActionsBox = new St.BoxLayout({
             style_class: 'pk-tile-actions',
@@ -135,6 +156,14 @@ export default class PortKillerExtension extends Extension {
         this._indicator.menu.addMenuItem(menuItem);
     }
 
+    _updateNotifyButtonStyle() {
+        if (!this._notifyBtn) return;
+        this._notifyBtn.set_label(this._notifyEnabled ? 'Notify: ON' : 'Notify: OFF');
+        this._notifyBtn.style_class = this._notifyEnabled
+            ? 'button pk-pill-btn pk-pill-accent'
+            : 'button pk-pill-btn';
+    }
+
     _updateProtoButtonStyles() {
         for (const proto of PROTOS) {
             const btn = this._protoButtons[proto];
@@ -143,6 +172,65 @@ export default class PortKillerExtension extends Extension {
                 ? 'button pk-proto-btn pk-pill-accent'
                 : 'button pk-proto-btn';
         }
+    }
+
+    _getDockerContainerMap() {
+        const now = GLib.get_monotonic_time();
+        if (now - this._dockerCacheTime < 3000000) {
+            return this._dockerPortMap;
+        }
+        this._dockerCacheTime = now;
+
+        const map = new Map();
+        try {
+            const [ok, stdout] = GLib.spawn_command_line_sync('docker ps --format "{{.Names}}|{{.Ports}}"');
+            if (!ok || !stdout) {
+                this._dockerPortMap = map;
+                return map;
+            }
+            const output = new TextDecoder().decode(stdout);
+            for (const line of output.split('\n')) {
+                if (!line.includes('|')) continue;
+                const [name, portsStr] = line.split('|');
+                const matches = portsStr.matchAll(/:(\d+)->/g);
+                for (const m of matches) {
+                    map.set(m[1], name.trim());
+                }
+            }
+        } catch (_e) {}
+
+        this._dockerPortMap = map;
+        return map;
+    }
+
+    _syncKnownSockets(items, emitNotifications = true) {
+        const nextMap = new Map();
+        for (const item of items) {
+            if (item.proto === 'UNIX') continue;
+            const key = `${item.proto}:${item.portNum}:${item.pid}`;
+            nextMap.set(key, item);
+        }
+
+        if (emitNotifications && this._notifyEnabled) {
+            for (const [key, item] of nextMap.entries()) {
+                if (!this._knownSockets.has(key)) {
+                    Main.notify(
+                        'Port Opened',
+                        `${item.proto} ${item.endpoint} opened by ${item.displayName} (PID ${item.pid})`
+                    );
+                }
+            }
+            for (const [key, item] of this._knownSockets.entries()) {
+                if (!nextMap.has(key)) {
+                    Main.notify(
+                        'Port Closed',
+                        `${item.proto} ${item.endpoint} closed (${item.displayName})`
+                    );
+                }
+            }
+        }
+
+        this._knownSockets = nextMap;
     }
 
     _startKernelSocketMonitor() {
@@ -229,7 +317,7 @@ export default class PortKillerExtension extends Extension {
         return {cmd, ppid, rssMb, uptime};
     }
 
-    _parseInetOutput(cmdStr, proto) {
+    _parseInetOutput(cmdStr, proto, dockerMap) {
         const results = [];
         try {
             const [ok, stdout] = GLib.spawn_command_line_sync(cmdStr);
@@ -252,6 +340,11 @@ export default class PortKillerExtension extends Extension {
 
                     const name = procMatch[1];
                     const pid = procMatch[2];
+                    const containerName = (name === 'docker-proxy' || name === 'rootlessport')
+                        ? dockerMap.get(port)
+                        : null;
+                    const displayName = containerName ? `docker (${containerName})` : name;
+
                     results.push({
                         proto,
                         endpoint: `:${port}`,
@@ -259,6 +352,8 @@ export default class PortKillerExtension extends Extension {
                         url: `http://localhost:${port}`,
                         bindAddr,
                         name,
+                        displayName,
+                        containerName: containerName || '',
                         pid,
                     });
                 }
@@ -282,13 +377,16 @@ export default class PortKillerExtension extends Extension {
                 if (procMatch && pathMatch) {
                     const sockPath = pathMatch[1];
                     const shortSock = sockPath.length > 22 ? `...${sockPath.slice(-19)}` : sockPath;
+                    const name = procMatch[1];
                     results.push({
                         proto: 'UNIX',
                         endpoint: shortSock,
                         portNum: 999999,
                         url: null,
                         bindAddr: sockPath,
-                        name: procMatch[1],
+                        name,
+                        displayName: name,
+                        containerName: '',
                         pid: procMatch[2],
                     });
                 }
@@ -299,9 +397,10 @@ export default class PortKillerExtension extends Extension {
 
     _getListeningSockets(applyFilters = false) {
         try {
+            const dockerMap = this._getDockerContainerMap();
             const rawList = [
-                ...this._parseInetOutput('ss -tlpnH', 'TCP'),
-                ...this._parseInetOutput('ss -ulpnH', 'UDP'),
+                ...this._parseInetOutput('ss -tlpnH', 'TCP', dockerMap),
+                ...this._parseInetOutput('ss -ulpnH', 'UDP', dockerMap),
                 ...this._parseUnixOutput(),
             ];
 
@@ -322,7 +421,7 @@ export default class PortKillerExtension extends Extension {
                     }
                     if (this._searchQuery.trim() !== '') {
                         const q = this._searchQuery.trim().toLowerCase();
-                        const hay = `${fullEntry.endpoint} ${fullEntry.name} ${fullEntry.pid} ${fullEntry.cmd} ${fullEntry.bindAddr}`.toLowerCase();
+                        const hay = `${fullEntry.endpoint} ${fullEntry.displayName} ${fullEntry.name} ${fullEntry.containerName} ${fullEntry.pid} ${fullEntry.cmd} ${fullEntry.bindAddr}`.toLowerCase();
                         if (!hay.includes(q)) continue;
                     }
                 }
@@ -340,6 +439,8 @@ export default class PortKillerExtension extends Extension {
     _updateBadge() {
         const allItems = this._getListeningSockets(false);
         const count = allItems.length;
+
+        this._syncKnownSockets(allItems, true);
 
         if (count !== this._lastCount) {
             this._lastCount = count;
@@ -382,7 +483,7 @@ export default class PortKillerExtension extends Extension {
         });
 
         const procTitle = new St.Label({
-            text: `${item.name}`,
+            text: `${item.displayName}`,
             style_class: 'pk-proc-title',
             y_align: Clutter.ActorAlign.CENTER,
             x_expand: true,
@@ -578,5 +679,8 @@ export default class PortKillerExtension extends Extension {
         this._listBox = null;
         this._titleLabel = null;
         this._headerActionsBox = null;
+        this._notifyBtn = null;
+        this._knownSockets.clear();
+        this._dockerPortMap.clear();
     }
 }
