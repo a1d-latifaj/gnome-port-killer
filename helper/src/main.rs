@@ -126,6 +126,9 @@ fn main() {
         [arg] if arg == "--check" => {
             native::run(true, |_| println!("Native probes attached successfully"))
         }
+        [arg] if arg == "--debug-events" => native::run(false, |event| {
+            println!("{event}");
+        }),
         _ => {
             eprintln!("Usage: port-killer-events --serve | --watch | --check");
             process::exit(2);
