@@ -69,9 +69,21 @@ export default class PortKillerExtension extends Extension {
         try {
             const settings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             const scheme = settings.get_string('color-scheme');
-            isDark = scheme !== 'prefer-light';
+            const gtkTheme = settings.get_string('gtk-theme').toLowerCase();
+            if (scheme === 'prefer-light') {
+                isDark = false;
+            } else if (scheme === 'prefer-dark') {
+                isDark = true;
+            } else {
+                isDark = !gtkTheme.includes('light');
+            }
         } catch (_e) {}
-        this._body.style_class = isDark ? 'pk-menu-body pk-dark' : 'pk-menu-body pk-light';
+
+        const modeClass = isDark ? 'pk-dark' : 'pk-light';
+        this._body.style_class = `pk-menu-body ${modeClass}`;
+        if (this._indicator?.menu?.box) {
+            this._indicator.menu.box.style_class = modeClass;
+        }
     }
 
     _buildMenuSkeleton() {
@@ -615,7 +627,7 @@ export default class PortKillerExtension extends Extension {
                 if (filteredItems.length > 0) {
                     const killAllBtn = new St.Button({
                         label: 'Kill All',
-                        style_class: 'button pk-pill-btn pk-mini-kill',
+                        style_class: 'pk-pill-btn pk-mini-kill',
                         can_focus: true,
                     });
                     killAllBtn.connect('clicked', () => {
