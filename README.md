@@ -33,50 +33,63 @@ The event bridge uses Rust and Aya to load embedded eBPF bytecode directly. The 
 
 ## Install
 
-Clone the repository and install the extension:
+Clone the repository and enter its directory.
 
-```bash
-git clone https://github.com/a1d-latifaj/gnome-port-killer.git
-cd gnome-port-killer
-./install.sh
-```
+    git clone https://github.com/a1d-latifaj/gnome-port-killer.git
+    cd gnome-port-killer
 
-Install the event service using one of the following paths. Its installer uses sudo to copy the root-owned binary/unit and enable/restart the service. It does not log out or restart GNOME.
+### Standard installation
 
-### Build the helper locally
+Install Rust/Cargo, Clang, bpftool and the GLib schema compiler.
+Fetch locked Rust dependencies before the offline build.
 
-Install Rust/Cargo first, plus Clang and bpftool. Build on the target architecture; the current build script supports x86_64 and AArch64 and generates kernel type definitions from the build host's BTF.
+    sudo apt install clang bpftool libglib2.0-bin
+    cargo fetch --manifest-path helper/Cargo.toml --locked
+    ./install.sh
 
-```bash
-# Additional build tools on Ubuntu:
-sudo apt install clang bpftool
-# Fetch dependencies before the installer's locked, offline build:
-cargo fetch --manifest-path helper/Cargo.toml --locked
-./scripts/install-helper.sh
-```
+The installer builds the Rust/eBPF helper, installs its systemd service
+with sudo, checks service readiness, and installs the GNOME extension.
+Kernel BTF support is required. The installer does not restart GNOME Shell.
 
-### Use a prebuilt helper
+### Prebuilt helper
 
-A compatible prebuilt executable needs no Rust, Cargo, Clang, bpftool or bpftrace on the user's machine:
+To use an existing compatible helper executable:
 
-```bash
-./scripts/install-helper.sh /path/to/port-killer-events
-```
+    ./install.sh --helper-binary /path/to/port-killer-events
 
-The prebuilt path accepts an executable you already have; this repository does not automatically download or publish release binaries.
+The executable must match the target architecture and runtime libraries.
+The installer does not download binaries automatically.
 
-After installing, enable `port-killer@dev` in GNOME Extensions. An already loaded JavaScript module requires a new GNOME Shell session. To test without logging out on GNOME 49/50:
+### Extension-only installation
 
-```bash
-# Ubuntu: sudo apt install mutter-dev-bin, if missing
-dbus-run-session -- gnome-shell --devkit --wayland
-```
+To install the GNOME extension without modifying the system helper:
 
-Enable the extension from a terminal inside that development session. Close and reopen only the development session after JavaScript changes.
+    ./install.sh --extension-only
 
-If the event service is missing or disconnected, the menu displays a warning. The ↻ button refreshes the list and reconnects the event streams. There is no silent polling fallback.
+### Recovery
+
+The extension is staged and its schemas are validated before activation.
+An existing installation is retained in a sibling backup directory.
+If activation fails after the backup is moved, the installer attempts
+to restore the previous extension.
+
+The helper installer retains copies of the previous binary and systemd
+unit, verifies service activity, checksum and watch-protocol readiness,
+and attempts rollback if installation fails.
+
+These are component-level recovery mechanisms, not one atomic
+transaction. If the helper installation succeeds and extension
+installation subsequently fails, the helper may remain updated.
+
+After installation, enable port-killer@dev using GNOME Extensions.
+A fresh GNOME Shell session may be required.
 
 ## Verification
+
+Run the isolated installation tests:
+
+    python3 tests/test-installation.py
+
 
 The JavaScript/GSettings suites require Node.js 22+, GJS, Python 3 and GLib schema tools. Rust checks also need the build tools above and fetched crates. Rust socket tests run as a normal user but require permission to create local UNIX sockets.
 
@@ -103,13 +116,15 @@ The BPF program uses Linux kernel probes, including `__sock_release`, whose avai
 
 ## Uninstall
 
-```bash
-./uninstall.sh
-# Optional: also remove the system event service
-./scripts/uninstall-helper.sh
-```
+Remove the GNOME extension while retaining the system helper:
 
-GSettings preferences remain available for a future installation.
+    ./uninstall.sh
+
+Explicitly remove both the extension and system helper:
+
+    ./uninstall.sh --with-helper
+
+Removing the helper requires sudo. GSettings preferences are retained.
 
 ## License
 

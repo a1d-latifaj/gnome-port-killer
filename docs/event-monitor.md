@@ -30,6 +30,26 @@ The fixed system service runs as root to attach BPF probes. It never runs proces
 
 The installer writes a root-owned executable to `/usr/local/libexec/port-killer-events` and a fixed unit to `/etc/systemd/system/port-killer-events.service`. systemd creates the root-owned runtime directory. The service uses a read-only filesystem, a private temporary directory, a bounded restart policy and a control group so it is stopped as a unit. The Rust binary has no setuid bit or file capabilities. Running the installer requires sudo authentication.
 
+## Installation and recovery
+
+The standard installer builds and installs the helper before activating
+the GNOME extension. The --helper-binary option uses a prebuilt helper;
+--extension-only skips helper installation.
+
+The extension is staged and schema-validated before activation.
+Previous extension files are retained in a sibling backup directory.
+
+The helper installer stores previous binary and unit copies under
+the XDG state directory, checks service activity, checksum and
+watch-protocol readiness, and attempts rollback after a failed update.
+
+Rollback is component-level rather than atomic across the helper and
+extension. A successful helper update is not automatically reverted
+if subsequent extension installation fails.
+
+The default uninstaller removes only the extension. The --with-helper
+option explicitly removes the system service as well.
+
 ## Build and probe checks
 
 ```bash
