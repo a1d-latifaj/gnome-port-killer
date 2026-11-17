@@ -14,10 +14,6 @@ jobs:
   build-x86_64:
     name: Ubuntu 24.04 / x86_64
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
 
     steps:
       - name: Checkout
@@ -85,12 +81,6 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-      - name: Attest build provenance
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/attest-build-provenance@v4.2.2
-        with:
-          subject-path: dist/port-killer-events-linux-x86_64
-
   verify-artifact:
     name: Verify downloaded build artifact
     needs: build-x86_64
@@ -127,3 +117,48 @@ jobs:
             --max-version 2.39
 
           echo "Downloaded artifact verified successfully."
+
+  attest-artifact:
+    name: Attest verified build artifact
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify-artifact
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: port-killer-events-linux-x86_64
+          path: dist/
+
+      - name: Verify artifact before attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f dist/SHA256SUMS
+          test -f dist/port-killer-events-linux-x86_64
+
+          (
+            cd dist
+            sha256sum --check SHA256SUMS
+          )
+
+          python3 scripts/check-helper-elf.py \
+            dist/port-killer-events-linux-x86_64
+
+          python3 scripts/check-glibc.py \
+            dist/port-killer-events-linux-x86_64 \
+            --max-version 2.39
+
+      - name: Attest verified build artifact
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/port-killer-events-linux-x86_64
