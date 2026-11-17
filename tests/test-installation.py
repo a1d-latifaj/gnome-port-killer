@@ -35,6 +35,29 @@ class InstallationTests(unittest.TestCase):
             timeout=30,
         )
 
+    def test_missing_preflight_rejects_installation(self):
+        isolated = Path(self.tmp.name) / "missing-preflight"
+        isolated.mkdir()
+        shutil.copy2(ROOT / "install.sh", isolated / "install.sh")
+
+        env = os.environ.copy()
+        env["XDG_DATA_HOME"] = str(self.data)
+
+        result = subprocess.run(
+            ["bash", str(isolated / "install.sh"), "--extension-only"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Missing required compatibility checker",
+            result.stderr,
+        )
+        self.assertFalse(self.dest.exists())
+
     def test_first_install(self):
         result = self.run_install()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -70,6 +93,10 @@ class InstallationTests(unittest.TestCase):
         shutil.copy2(
             ROOT / "scripts" / "check-helper-elf.py",
             scripts / "check-helper-elf.py",
+        )
+        shutil.copy2(
+            ROOT / "scripts" / "preflight.py",
+            scripts / "preflight.py",
         )
 
         helper_script = scripts / "install-helper.sh"
