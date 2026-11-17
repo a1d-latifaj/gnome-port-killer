@@ -14,6 +14,10 @@ jobs:
   build-x86_64:
     name: Ubuntu 24.04 / x86_64
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - name: Checkout
@@ -80,6 +84,12 @@ jobs:
           name: port-killer-events-linux-x86_64
           path: dist/
           if-no-files-found: error
+
+      - name: Attest build provenance
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@v4.2.2
+        with:
+          subject-path: dist/port-killer-events-linux-x86_64
 
   verify-artifact:
     name: Verify downloaded build artifact
