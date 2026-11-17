@@ -33,6 +33,16 @@ case "${1:-}" in
         ;;
 esac
 
+# Validate compatibility before creating installation directories.
+if [[ -f "$ROOT/scripts/preflight.py" ]]; then
+    command -v python3 >/dev/null || {
+        echo "Missing python3 required for compatibility checks" >&2
+        exit 1
+    }
+
+    python3 "$ROOT/scripts/preflight.py" --mode "$MODE"
+fi
+
 command -v glib-compile-schemas >/dev/null || {
     echo "Missing glib-compile-schemas" >&2
     exit 1

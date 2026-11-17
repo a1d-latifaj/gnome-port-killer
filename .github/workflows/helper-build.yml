@@ -1,0 +1,105 @@
+name: Helper Build
+
+on:
+  push:
+    branches:
+      - feat/ubuntu-public-installer
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-x86_64:
+    name: Ubuntu 24.04 / x86_64
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            llvm \
+            bpftool \
+            libelf-dev \
+            zlib1g-dev
+
+      - name: Check kernel BTF
+        run: |
+          test -r /sys/kernel/btf/vmlinux
+          uname -r
+          bpftool version
+          clang --version
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build helper
+        run: |
+          cargo build \
+            --manifest-path helper/Cargo.toml \
+            --release \
+            --locked
+
+      - name: Verify ELF architecture
+        run: |
+          file helper/target/release/port-killer-events
+          readelf -h helper/target/release/port-killer-events
+          ldd helper/target/release/port-killer-events
+
+      - name: Verify Ubuntu 24.04 GLIBC compatibility
+        run: |
+          python3 - <<'PY_CHECK'
+          import re
+          import subprocess
+
+          binary = "helper/target/release/port-killer-events"
+
+          result = subprocess.run(
+              ["readelf", "--version-info", binary],
+              capture_output=True,
+              text=True,
+              check=True,
+          )
+
+          versions = {
+              tuple(map(int, match.split(".")))
+              for match in re.findall(
+                  r"GLIBC_(\\d+\\.\\d+)",
+                  result.stdout,
+              )
+          }
+
+          highest = max(versions, default=(0, 0))
+          print("Highest required GLIBC:", ".".join(map(str, highest)))
+
+          if highest > (2, 39):
+              raise SystemExit(
+                  "Binary requires GLIBC newer than Ubuntu 24.04"
+              )
+          PY_CHECK
+
+      - name: Package helper
+        run: |
+          mkdir -p dist
+
+          install -m 0755 \
+            helper/target/release/port-killer-events \
+            dist/port-killer-events-linux-x86_64
+
+          (
+            cd dist
+            sha256sum port-killer-events-linux-x86_64 > SHA256SUMS
+          )
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: port-killer-events-linux-x86_64
+          path: dist/
+          if-no-files-found: error
