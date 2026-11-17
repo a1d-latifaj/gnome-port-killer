@@ -113,6 +113,11 @@ if [[ "$MODE" == "build" ]]; then
     HELPER_BINARY="$ROOT/helper/target/release/port-killer-events"
 fi
 
+# Reject incompatible helper binaries before modifying the extension.
+if [[ "$MODE" != "extension-only" ]]; then
+    python3 "$ROOT/scripts/check-helper-elf.py" "$HELPER_BINARY"
+fi
+
 
 if [[ -L "$DEST" || ( -e "$DEST" && ! -d "$DEST" ) ]]; then
     echo "Extension destination is not a regular directory" >&2
