@@ -54,35 +54,12 @@ jobs:
 
       - name: Verify Ubuntu 24.04 GLIBC compatibility
         run: |
-          python3 - <<'PY_CHECK'
-          import re
-          import subprocess
+          python3 scripts/check-glibc.py \
+            helper/target/release/port-killer-events \
+            --max-version 2.39
 
-          binary = "helper/target/release/port-killer-events"
-
-          result = subprocess.run(
-              ["readelf", "--version-info", binary],
-              capture_output=True,
-              text=True,
-              check=True,
-          )
-
-          versions = {
-              tuple(map(int, match.split(".")))
-              for match in re.findall(
-                  r"GLIBC_(\\d+\\.\\d+)",
-                  result.stdout,
-              )
-          }
-
-          highest = max(versions, default=(0, 0))
-          print("Highest required GLIBC:", ".".join(map(str, highest)))
-
-          if highest > (2, 39):
-              raise SystemExit(
-                  "Binary requires GLIBC newer than Ubuntu 24.04"
-              )
-          PY_CHECK
+      - name: Test GLIBC validator
+        run: python3 tests/test-glibc.py
 
       - name: Package helper
         run: |
