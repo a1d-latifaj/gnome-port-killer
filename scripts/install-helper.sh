@@ -73,35 +73,50 @@ rollback() {
 
     echo "Helper installation failed. Rolling back..." >&2
 
-    sudo systemctl stop "$SERVICE" || true
+    local rollback_failed=0
+
+    rollback_step() {
+        if ! "$@"; then
+            echo "ROLLBACK ERROR: $*" >&2
+            rollback_failed=1
+        fi
+    }
+
+    rollback_step sudo systemctl stop "$SERVICE"
 
     if [[ "$HAD_BINARY" -eq 1 ]]; then
-        sudo install -o root -g root -m 0755 \
-            "$BACKUP/previous-binary" "$DEST" || true
+        rollback_step sudo install -o root -g root -m 0755 \
+            "$BACKUP/previous-binary" "$DEST"
     else
-        sudo rm -f "$DEST" || true
+        rollback_step sudo rm -f "$DEST"
     fi
 
     if [[ "$HAD_UNIT" -eq 1 ]]; then
-        sudo install -o root -g root -m 0644 \
-            "$BACKUP/previous-unit" "$UNIT" || true
+        rollback_step sudo install -o root -g root -m 0644 \
+            "$BACKUP/previous-unit" "$UNIT"
     else
-        sudo rm -f "$UNIT" || true
+        rollback_step sudo rm -f "$UNIT"
     fi
 
-    sudo systemctl daemon-reload || true
+    rollback_step sudo systemctl daemon-reload
 
     if [[ "$WAS_ENABLED" -eq 1 ]]; then
-        sudo systemctl enable "$SERVICE" || true
+        rollback_step sudo systemctl enable "$SERVICE"
     else
-        sudo systemctl disable "$SERVICE" || true
+        rollback_step sudo systemctl disable "$SERVICE"
     fi
 
     if [[ "$WAS_ACTIVE" -eq 1 ]]; then
-        sudo systemctl start "$SERVICE" || true
+        rollback_step sudo systemctl start "$SERVICE"
     fi
 
     echo "Rollback backup: $BACKUP" >&2
+
+    if [[ "$rollback_failed" -ne 0 ]]; then
+        echo "CRITICAL: Rollback incomplete. Manual recovery may be required." >&2
+        exit 1
+    fi
+
     exit "$code"
 }
 
