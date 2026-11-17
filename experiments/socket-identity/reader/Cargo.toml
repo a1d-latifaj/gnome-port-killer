@@ -1,0 +1,8 @@
+[package]
+name = "socket-identity-reader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya = "=0.15.0"
+libc = "0.2"

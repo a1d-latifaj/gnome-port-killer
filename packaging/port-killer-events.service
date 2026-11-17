@@ -1,0 +1,29 @@
+[Unit]
+Description=Port Killer read-only socket event monitor
+Documentation=https://github.com/a1d-latifaj/gnome-port-killer
+After=local-fs.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/libexec/port-killer-events --serve
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=port-killer
+RuntimeDirectoryMode=0755
+KillMode=control-group
+TimeoutStopSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/port-killer
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictRealtime=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

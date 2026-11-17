@@ -3,3 +3,11 @@
 __pycache__/
 .DS_Store
 *~
+
+/helper/target/
+**/gschemas.compiled
+
+# Experimental Rust build artifacts
+/experiments/**/target/
+# Compiled eBPF objects
+/experiments/**/*.bpf.o
