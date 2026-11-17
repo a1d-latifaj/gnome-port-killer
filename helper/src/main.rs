@@ -1,7 +1,11 @@
-//! A read-only bridge: a privileged daemon owns the fixed BPF program; an
-//! unprivileged --watch client streams invalidations to GNOME. No RPC commands.
+// A read-only bridge: a privileged daemon owns the fixed BPF program; an
+// unprivileged --watch client streams invalidations to GNOME. No RPC commands.
 mod event;
+mod event_batch;
 mod native;
+mod reconcile;
+mod recovery_gate;
+mod snapshot;
 mod state;
 use std::env;
 use std::fs;
@@ -129,8 +133,49 @@ fn main() {
         [arg] if arg == "--debug-events" => native::run(false, |event| {
             println!("{event}");
         }),
+        [arg] if arg == "--debug-snapshot" => snapshot::collect().map(|sockets| {
+            for socket in &sockets {
+                let protocol = if socket.protocol == 6 { "TCP" } else { "UDP" };
+                let family = if socket.family == 2 { "IPv4" } else { "IPv6" };
+
+                println!(
+                    "snapshot {protocol} {family} port={} cookie={} inode={}",
+                    socket.local_port, socket.socket_id, socket.inode
+                );
+            }
+
+            println!("snapshot TOTAL={}", sockets.len());
+        }),
+        [arg] if arg == "--debug-state" => native::run_with_recovery(
+            false,
+            |_| {},
+            move |event| {
+                let protocol = if event.protocol == 6 { "TCP" } else { "UDP" };
+                println!(
+                    "state EVENT {protocol} type={} id={} pid={} port={}",
+                    event.event_type, event.socket_id, event.pid, event.local_port
+                );
+            },
+            || println!("state RESYNC_REQUIRED"),
+            |state| {
+                println!("state SNAPSHOT active={}", state.len());
+                for socket in state.sockets() {
+                    let protocol = if socket.protocol == 6 { "TCP" } else { "UDP" };
+                    println!(
+                        "state SOCKET {protocol} id={} pid={} family={} port={} timestamp={}",
+                        socket.socket_id,
+                        socket.pid,
+                        socket.family,
+                        socket.local_port,
+                        socket.timestamp_ns
+                    );
+                }
+            },
+        ),
         _ => {
-            eprintln!("Usage: port-killer-events --serve | --watch | --check");
+            eprintln!(
+                "Usage: port-killer-events --serve | --watch | --check | --debug-events | --debug-snapshot | --debug-state"
+            );
             process::exit(2);
         }
     };

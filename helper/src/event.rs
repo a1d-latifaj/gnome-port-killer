@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::mem::{align_of, size_of};
 
 pub const EVENT_VERSION: u16 = 2;
@@ -29,7 +30,10 @@ impl SocketEvent {
     pub fn is_valid(&self) -> bool {
         self.version == EVENT_VERSION
             && self.socket_id != 0
+            && self.socket_id != u64::MAX
+            && self.timestamp_ns != 0
             && self.local_port != 0
+            && self.reserved == 0
             && matches!(self.family, 2 | 10)
             && matches!(self.protocol, 6 | 17)
             && matches!(self.event_type, 1..=4)
@@ -99,6 +103,25 @@ mod tests {
             reserved: 0,
         };
 
+        assert!(!event.is_valid());
+    }
+
+    #[test]
+    fn zero_timestamp_and_reserved_fields_are_rejected() {
+        let mut event = SocketEvent {
+            socket_id: 123,
+            timestamp_ns: 0,
+            pid: 4242,
+            event_type: EventType::UdpBind as u16,
+            family: 10,
+            protocol: 17,
+            local_port: 5353,
+            version: EVENT_VERSION,
+            reserved: 0,
+        };
+        assert!(!event.is_valid());
+        event.timestamp_ns = 100;
+        event.reserved = 1;
         assert!(!event.is_valid());
     }
 }
