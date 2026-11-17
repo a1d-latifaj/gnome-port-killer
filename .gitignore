@@ -11,3 +11,10 @@ __pycache__/
 /experiments/**/target/
 # Compiled eBPF objects
 /experiments/**/*.bpf.o
+
+# Local development backups
+/.install-backups/
+/extension/*.backup
+/helper/bpf/*.pre-cookie-fix
+/helper/src/*.pre-loss-test
+/scripts/install-safe.sh
