@@ -34,11 +34,14 @@ fi
     exit 1
 }
 
-BACKUP_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/gnome-port-killer/backups"
-mkdir -p "$BACKUP_ROOT"
+# Keep privileged rollback material outside user-writable directories.
+BACKUP_ROOT="/var/lib/gnome-port-killer/backups"
 
-BACKUP="$(mktemp -d "$BACKUP_ROOT/helper.XXXXXXXX")"
-chmod 700 "$BACKUP"
+sudo install -d -o root -g root -m 0700 \
+    /var/lib/gnome-port-killer "$BACKUP_ROOT"
+
+BACKUP="$(sudo mktemp -d "$BACKUP_ROOT/helper.XXXXXXXX")"
+sudo chmod 0700 "$BACKUP"
 
 WAS_ACTIVE=0
 WAS_ENABLED=0
@@ -51,12 +54,12 @@ systemctl is-active --quiet "$SERVICE" && WAS_ACTIVE=1 || true
 systemctl is-enabled --quiet "$SERVICE" && WAS_ENABLED=1 || true
 
 if sudo test -f "$DEST"; then
-    sudo cp -p "$DEST" "$BACKUP/previous-binary"
+    sudo install -o root -g root -m 0700 "$DEST" "$BACKUP/previous-binary"
     HAD_BINARY=1
 fi
 
 if sudo test -f "$UNIT"; then
-    sudo cp -p "$UNIT" "$BACKUP/previous-unit"
+    sudo install -o root -g root -m 0600 "$UNIT" "$BACKUP/previous-unit"
     HAD_UNIT=1
 fi
 
