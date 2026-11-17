@@ -34,11 +34,14 @@ fi
     exit 1
 }
 
-BACKUP_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/gnome-port-killer/backups"
-mkdir -p "$BACKUP_ROOT"
+# Keep privileged rollback material outside user-writable directories.
+BACKUP_ROOT="/var/lib/gnome-port-killer/backups"
 
-BACKUP="$(mktemp -d "$BACKUP_ROOT/helper.XXXXXXXX")"
-chmod 700 "$BACKUP"
+sudo install -d -o root -g root -m 0700 \
+    /var/lib/gnome-port-killer "$BACKUP_ROOT"
+
+BACKUP="$(sudo mktemp -d "$BACKUP_ROOT/helper.XXXXXXXX")"
+sudo chmod 0700 "$BACKUP"
 
 WAS_ACTIVE=0
 WAS_ENABLED=0
@@ -51,12 +54,12 @@ systemctl is-active --quiet "$SERVICE" && WAS_ACTIVE=1 || true
 systemctl is-enabled --quiet "$SERVICE" && WAS_ENABLED=1 || true
 
 if sudo test -f "$DEST"; then
-    sudo cp -p "$DEST" "$BACKUP/previous-binary"
+    sudo install -o root -g root -m 0700 "$DEST" "$BACKUP/previous-binary"
     HAD_BINARY=1
 fi
 
 if sudo test -f "$UNIT"; then
-    sudo cp -p "$UNIT" "$BACKUP/previous-unit"
+    sudo install -o root -g root -m 0600 "$UNIT" "$BACKUP/previous-unit"
     HAD_UNIT=1
 fi
 
@@ -70,35 +73,50 @@ rollback() {
 
     echo "Helper installation failed. Rolling back..." >&2
 
-    sudo systemctl stop "$SERVICE" || true
+    local rollback_failed=0
+
+    rollback_step() {
+        if ! "$@"; then
+            echo "ROLLBACK ERROR: $*" >&2
+            rollback_failed=1
+        fi
+    }
+
+    rollback_step sudo systemctl stop "$SERVICE"
 
     if [[ "$HAD_BINARY" -eq 1 ]]; then
-        sudo install -o root -g root -m 0755 \
-            "$BACKUP/previous-binary" "$DEST" || true
+        rollback_step sudo install -o root -g root -m 0755 \
+            "$BACKUP/previous-binary" "$DEST"
     else
-        sudo rm -f "$DEST" || true
+        rollback_step sudo rm -f "$DEST"
     fi
 
     if [[ "$HAD_UNIT" -eq 1 ]]; then
-        sudo install -o root -g root -m 0644 \
-            "$BACKUP/previous-unit" "$UNIT" || true
+        rollback_step sudo install -o root -g root -m 0644 \
+            "$BACKUP/previous-unit" "$UNIT"
     else
-        sudo rm -f "$UNIT" || true
+        rollback_step sudo rm -f "$UNIT"
     fi
 
-    sudo systemctl daemon-reload || true
+    rollback_step sudo systemctl daemon-reload
 
     if [[ "$WAS_ENABLED" -eq 1 ]]; then
-        sudo systemctl enable "$SERVICE" || true
+        rollback_step sudo systemctl enable "$SERVICE"
     else
-        sudo systemctl disable "$SERVICE" || true
+        rollback_step sudo systemctl disable "$SERVICE"
     fi
 
     if [[ "$WAS_ACTIVE" -eq 1 ]]; then
-        sudo systemctl start "$SERVICE" || true
+        rollback_step sudo systemctl start "$SERVICE"
     fi
 
     echo "Rollback backup: $BACKUP" >&2
+
+    if [[ "$rollback_failed" -ne 0 ]]; then
+        echo "CRITICAL: Rollback incomplete. Manual recovery may be required." >&2
+        exit 1
+    fi
+
     exit "$code"
 }
 

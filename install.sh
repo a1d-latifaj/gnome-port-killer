@@ -33,6 +33,19 @@ case "${1:-}" in
         ;;
 esac
 
+# Validate compatibility before creating installation directories.
+[[ -f "$ROOT/scripts/preflight.py" ]] || {
+    echo "Missing required compatibility checker: scripts/preflight.py" >&2
+    exit 1
+}
+
+command -v python3 >/dev/null || {
+    echo "Missing python3 required for compatibility checks" >&2
+    exit 1
+}
+
+python3 "$ROOT/scripts/preflight.py" --mode "$MODE"
+
 command -v glib-compile-schemas >/dev/null || {
     echo "Missing glib-compile-schemas" >&2
     exit 1
@@ -101,6 +114,11 @@ glib-compile-schemas --strict "$STAGING/schemas"
 if [[ "$MODE" == "build" ]]; then
     "$ROOT/scripts/build-helper.sh"
     HELPER_BINARY="$ROOT/helper/target/release/port-killer-events"
+fi
+
+# Reject incompatible helper binaries before modifying the extension.
+if [[ "$MODE" != "extension-only" ]]; then
+    python3 "$ROOT/scripts/check-helper-elf.py" "$HELPER_BINARY"
 fi
 
 
